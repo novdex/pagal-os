@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Logs - PAGAL OS{% endblock %}
+{% block nav_logs %}active{% endblock %}
+
+{% block content %}
+<section class="page-header">
+    <h1>Agent Logs</h1>
+    <p>View execution logs for your agents</p>
+</section>
+
+<section class="card">
+    <div class="form-group">
+        <label for="log-agent-select">Select Agent</label>
+        <select id="log-agent-select">
+            <option value="">-- Select an agent --</option>
+            {% for agent in agents %}
+            <option value="{{ agent.name }}">{{ agent.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div id="log-container" class="log-container">
+        <p class="log-placeholder">Select an agent to view logs.</p>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Set up log auto-refresh
+    const logSelect = document.getElementById('log-agent-select');
+    let logRefreshInterval = null;
+
+    logSelect.addEventListener('change', function() {
+        const agentName = this.value;
+        if (logRefreshInterval) clearInterval(logRefreshInterval);
+
+        if (agentName) {
+            fetchLogs(agentName);
+            logRefreshInterval = setInterval(() => fetchLogs(agentName), 5000);
+        } else {
+            document.getElementById('log-container').innerHTML =
+                '<p class="log-placeholder">Select an agent to view logs.</p>';
+        }
+    });
+</script>
+{% endblock %}

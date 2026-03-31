@@ -1,0 +1,8 @@
+version: 1
+api_port: 8080
+web_port: 3000
+default_model: "nvidia/nemotron-3-super-120b-a12b:free"
+ollama_url: "http://localhost:11434"
+max_concurrent_agents: 5
+agent_timeout_seconds: 300
+storage_path: "~/.pagal-os"

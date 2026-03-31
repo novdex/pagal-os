@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Create Agent - PAGAL OS{% endblock %}
+{% block nav_create %}active{% endblock %}
+
+{% block content %}
+<section class="page-header">
+    <h1>Create Agent</h1>
+    <p>Describe what you want your agent to do, and we'll build it for you.</p>
+</section>
+
+<section class="card create-form-card">
+    <form id="create-agent-form">
+        <div class="form-group">
+            <label for="agent-description">What should your agent do?</label>
+            <textarea
+                id="agent-description"
+                name="description"
+                rows="6"
+                placeholder="Example: A research agent that searches for the latest AI news, summarises the top stories, and saves a report to a file."
+                required
+            ></textarea>
+        </div>
+        <div class="form-group">
+            <label for="agent-model">Model (optional)</label>
+            <select id="agent-model" name="model">
+                <option value="">Default (free model)</option>
+                <option value="nvidia/nemotron-3-super-120b-a12b:free">Nemotron 120B (free)</option>
+                <option value="meta-llama/llama-3.1-8b-instruct:free">Llama 3.1 8B (free)</option>
+                <option value="google/gemma-2-9b-it:free">Gemma 2 9B (free)</option>
+                <option value="ollama/llama3">Ollama Llama 3 (local)</option>
+            </select>
+        </div>
+        <button type="submit" class="btn btn-primary btn-lg">Create Agent</button>
+    </form>
+
+    <div id="create-result" class="result-box" style="display:none;"></div>
+</section>
+{% endblock %}

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}PAGAL OS{% endblock %}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">
+            <a href="/">
+                <span class="logo-icon">&#x1F9E0;</span>
+                <span class="logo-text">PAGAL OS</span>
+            </a>
+        </div>
+        <div class="nav-links">
+            <a href="/" class="nav-link {% block nav_dashboard %}{% endblock %}">My Agents</a>
+            <a href="/create" class="nav-link {% block nav_create %}{% endblock %}">Create</a>
+            <a href="/logs" class="nav-link {% block nav_logs %}{% endblock %}">Logs</a>
+            <a href="/settings" class="nav-link {% block nav_settings %}{% endblock %}">Settings</a>
+        </div>
+    </nav>
+
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="footer">
+        <p>PAGAL OS v0.1 &mdash; AI Agent Operating System</p>
+    </footer>
+
+    <script src="/static/app.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

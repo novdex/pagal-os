@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Settings - PAGAL OS{% endblock %}
+{% block nav_settings %}active{% endblock %}
+
+{% block content %}
+<section class="page-header">
+    <h1>Settings</h1>
+    <p>Configure your PAGAL OS instance</p>
+</section>
+
+<section class="card">
+    <form id="settings-form">
+        <div class="form-group">
+            <label for="api-key">OpenRouter API Key</label>
+            <input
+                type="password"
+                id="api-key"
+                name="openrouter_api_key"
+                placeholder="sk-or-..."
+                value="{{ config.openrouter_api_key if config.openrouter_api_key else '' }}"
+            >
+            <small>Get your key at <a href="https://openrouter.ai/keys" target="_blank">openrouter.ai/keys</a></small>
+        </div>
+
+        <div class="form-group">
+            <label for="default-model">Default Model</label>
+            <select id="default-model" name="default_model">
+                <option value="nvidia/nemotron-3-super-120b-a12b:free" {% if config.default_model == "nvidia/nemotron-3-super-120b-a12b:free" %}selected{% endif %}>Nemotron 120B (free)</option>
+                <option value="meta-llama/llama-3.1-8b-instruct:free" {% if config.default_model == "meta-llama/llama-3.1-8b-instruct:free" %}selected{% endif %}>Llama 3.1 8B (free)</option>
+                <option value="google/gemma-2-9b-it:free" {% if config.default_model == "google/gemma-2-9b-it:free" %}selected{% endif %}>Gemma 2 9B (free)</option>
+                <option value="ollama/llama3" {% if config.default_model == "ollama/llama3" %}selected{% endif %}>Ollama Llama 3 (local)</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="ollama-url">Ollama URL</label>
+            <input
+                type="text"
+                id="ollama-url"
+                name="ollama_url"
+                value="{{ config.ollama_url }}"
+                placeholder="http://localhost:11434"
+            >
+        </div>
+
+        <button type="submit" class="btn btn-primary">Save Settings</button>
+    </form>
+
+    <div id="settings-result" class="result-box" style="display:none;"></div>
+</section>
+{% endblock %}

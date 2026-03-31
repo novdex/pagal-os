@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - PAGAL OS{% endblock %}
+{% block nav_dashboard %}active{% endblock %}
+
+{% block content %}
+<section class="page-header">
+    <h1>My Agents</h1>
+    <p>Manage and run your AI agents</p>
+</section>
+
+<!-- Quick Run -->
+<section class="quick-run card">
+    <h2>Quick Run</h2>
+    <form id="quick-run-form" class="quick-run-form">
+        <input type="text" id="quick-agent" placeholder="Agent name" required>
+        <input type="text" id="quick-task" placeholder="Task to perform..." required>
+        <button type="submit" class="btn btn-primary">Run</button>
+    </form>
+    <div id="quick-result" class="result-box" style="display:none;"></div>
+</section>
+
+<!-- Agent Cards -->
+<section class="agents-grid" id="agents-grid">
+    {% if agents %}
+        {% for agent in agents %}
+        <div class="agent-card card" data-name="{{ agent.name }}">
+            <div class="agent-header">
+                <h3>{{ agent.name }}</h3>
+                <span class="status-dot {% if agent.status == 'running' %}status-running{% else %}status-idle{% endif %}"></span>
+            </div>
+            <p class="agent-desc">{{ agent.description }}</p>
+            <div class="agent-meta">
+                <span class="badge">{{ agent.tools | length }} tools</span>
+                <span class="badge badge-status">{{ agent.status }}</span>
+            </div>
+            <div class="agent-actions">
+                <button class="btn btn-primary btn-sm" onclick="runAgentPrompt('{{ agent.name }}')">Run</button>
+                <button class="btn btn-danger btn-sm" onclick="stopAgent('{{ agent.name }}')">Stop</button>
+                <button class="btn btn-secondary btn-sm" onclick="deleteAgent('{{ agent.name }}')">Delete</button>
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <div class="empty-state card">
+            <h3>No agents yet</h3>
+            <p>Create your first agent to get started!</p>
+            <a href="/create" class="btn btn-primary">Create Agent</a>
+        </div>
+    {% endif %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Auto-refresh agent statuses every 5 seconds
+    setInterval(refreshAgentStatuses, 5000);
+</script>
+{% endblock %}

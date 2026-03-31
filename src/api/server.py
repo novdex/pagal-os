@@ -1,0 +1,52 @@
+"""PAGAL OS API Server — FastAPI application with web dashboard."""
+
+import logging
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import AsyncGenerator
+
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
+from src.api.routes import router
+from src.core.config import get_config
+
+logger = logging.getLogger("pagal_os")
+
+# Resolve paths relative to the project root
+_project_root = Path(__file__).parent.parent.parent
+_templates_dir = _project_root / "src" / "web" / "templates"
+_static_dir = _project_root / "src" / "web" / "static"
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
+    """Application lifespan handler — initializes tools and config on startup.
+
+    Args:
+        application: The FastAPI application instance.
+    """
+    import src.tools  # noqa: F401
+
+    config = get_config()
+    logger.info("PAGAL OS server started on port %d", config.web_port)
+    yield
+
+
+# Create FastAPI app
+app = FastAPI(
+    title="PAGAL OS",
+    description="AI Agent Operating System",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+# Mount static files
+app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
+
+# Set up Jinja2 templates
+templates = Jinja2Templates(directory=str(_templates_dir))
+
+# Include API routes
+app.include_router(router)
