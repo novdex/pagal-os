@@ -125,7 +125,7 @@ def get_recent_messages(agent_name: str, limit: int = 20) -> list[dict[str, Any]
             """SELECT id, session_id, role, content, importance, created_at
                FROM agent_memory
                WHERE agent_name = ?
-               ORDER BY created_at DESC
+               ORDER BY created_at DESC, id DESC
                LIMIT ?""",
             (agent_name, limit),
         ).fetchall()

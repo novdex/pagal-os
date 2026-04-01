@@ -121,11 +121,15 @@ def cmd_stop(args: argparse.Namespace) -> None:
 
 
 def cmd_server(_args: argparse.Namespace) -> None:
-    """Handle the 'server' command — start the API + web dashboard.
+    """Handle the 'server' command -- start the API + web dashboard.
+
+    Handles Ctrl+C gracefully: stops hands, closes DB connections, saves state.
 
     Args:
         _args: Parsed CLI arguments (unused).
     """
+    import signal
+
     import uvicorn
 
     from src.core.config import get_config
@@ -134,13 +138,54 @@ def cmd_server(_args: argparse.Namespace) -> None:
     print(f"Starting PAGAL OS server on http://localhost:{config.web_port}")
     print("Press Ctrl+C to stop.")
 
-    uvicorn.run(
-        "src.api.server:app",
-        host="0.0.0.0",
-        port=config.web_port,
-        reload=False,
-        log_level="info",
-    )
+    def _graceful_shutdown(signum: int, frame: object) -> None:
+        """Handle shutdown signal by cleaning up resources."""
+        print("\nPAGAL OS shutting down...")
+
+        # Stop all running hands
+        try:
+            from src.core.hands import _active_hands, stop_hand
+            hand_names = list(_active_hands.keys())
+            for name in hand_names:
+                try:
+                    stop_hand(name)
+                except Exception:
+                    pass
+            if hand_names:
+                print(f"  Stopped {len(hand_names)} hand(s).")
+        except Exception:
+            pass
+
+        # Stop MCP server
+        try:
+            from src.core.mcp import stop_mcp_server
+            stop_mcp_server()
+        except Exception:
+            pass
+
+        # Stop A2A server
+        try:
+            from src.core.a2a import stop_a2a_server
+            stop_a2a_server()
+        except Exception:
+            pass
+
+        print("  Shutdown complete.")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _graceful_shutdown)
+    signal.signal(signal.SIGTERM, _graceful_shutdown)
+
+    try:
+        uvicorn.run(
+            "src.api.server:app",
+            host="0.0.0.0",
+            port=config.web_port,
+            reload=False,
+            log_level="info",
+        )
+    except SystemExit:
+        pass
 
 
 # --- Store Commands ---
@@ -913,6 +958,18 @@ def cmd_telegram(_args: argparse.Namespace) -> None:
     start_telegram_bot(bot_token, default_agent)
 
 
+def cmd_doctor(_args: argparse.Namespace) -> None:
+    """Handle the 'doctor' command -- run system health check.
+
+    Args:
+        _args: Parsed CLI arguments (unused).
+    """
+    from src.core.doctor import print_doctor_report, run_doctor
+
+    report = run_doctor()
+    print_doctor_report(report)
+
+
 def main() -> None:
     """Entry point for the PAGAL OS CLI."""
     _setup_logging()
@@ -1080,6 +1137,9 @@ def main() -> None:
     import_p = subparsers.add_parser("import", help="Import an agent from a shared file or code")
     import_p.add_argument("source", help="File path or share code")
 
+    # --- Doctor command ---
+    subparsers.add_parser("doctor", help="Run system health check and auto-repair")
+
     # --- Traces commands ---
     traces_p = subparsers.add_parser("traces", help="List recent agent traces")
     traces_p.add_argument("--agent", default=None, help="Filter by agent name")
@@ -1210,6 +1270,7 @@ def main() -> None:
         "import": cmd_import,
         "traces": cmd_traces,
         "trace": cmd_trace_detail,
+        "doctor": cmd_doctor,
     }
 
     handler = commands.get(args.command)

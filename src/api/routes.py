@@ -20,6 +20,13 @@ from src.core.runtime import (
     stop_agent,
 )
 from src.core.sandbox import run_in_sandbox
+from src.core.validators import (
+    validate_agent_name,
+    validate_file_path,
+    validate_rating,
+    validate_share_code,
+    validate_task,
+)
 
 logger = logging.getLogger("pagal_os")
 
@@ -133,8 +140,14 @@ async def api_create_agent(req: CreateAgentRequest) -> dict[str, Any]:
         Dict with agent name and success status.
     """
     try:
+        valid, err = validate_task(req.description)
+        if not valid:
+            raise HTTPException(status_code=400, detail=err)
+
         name = create_agent_from_description(req.description, req.model)
         return {"ok": True, "name": name, "message": f"Agent '{name}' created"}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Failed to create agent: %s", e)
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -167,6 +180,13 @@ async def api_run_agent(name: str, req: RunAgentRequest) -> dict[str, Any]:
         AgentResult as dict if synchronous, or status message if async.
     """
     try:
+        valid, err = validate_agent_name(name)
+        if not valid:
+            raise HTTPException(status_code=400, detail=err)
+        valid, err = validate_task(req.task)
+        if not valid:
+            raise HTTPException(status_code=400, detail=err)
+
         if req.async_mode:
             result = run_agent_async(name, req.task)
             return {"ok": True, **result}
@@ -180,6 +200,8 @@ async def api_run_agent(name: str, req: RunAgentRequest) -> dict[str, Any]:
             "duration_seconds": result.duration_seconds,
             "error": result.error,
         }
+    except HTTPException:
+        raise
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
     except Exception as e:
@@ -299,6 +321,14 @@ async def api_start_hand(req: StartHandRequest) -> dict[str, Any]:
     """
     try:
         from src.core.hands import start_hand
+
+        valid, err = validate_agent_name(req.agent)
+        if not valid:
+            raise HTTPException(status_code=400, detail=err)
+        valid, err = validate_task(req.task)
+        if not valid:
+            raise HTTPException(status_code=400, detail=err)
+
         result = start_hand(req.agent, req.schedule, req.task)
         if not result.get("ok"):
             raise HTTPException(status_code=400, detail=result.get("error", "Unknown error"))
@@ -899,8 +929,10 @@ async def api_rate_agent(agent_id: str, req: RateAgentRequest) -> dict[str, Any]
     try:
         from src.core.marketplace import rate_agent
 
-        if not 1 <= req.rating <= 5:
-            raise HTTPException(status_code=400, detail="Rating must be 1-5")
+        valid, err = validate_rating(req.rating)
+        if not valid:
+            raise HTTPException(status_code=400, detail=err)
+
         if rate_agent(agent_id, req.rating, req.review):
             return {"ok": True, "message": f"Agent '{agent_id}' rated {req.rating} stars"}
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
@@ -1034,6 +1066,13 @@ async def api_clone_agent(name: str, req: CloneAgentRequest) -> dict[str, Any]:
     try:
         from src.core.cloning import clone_agent
 
+        valid, err = validate_agent_name(name)
+        if not valid:
+            raise HTTPException(status_code=400, detail=f"Source name invalid: {err}")
+        valid, err = validate_agent_name(req.new_name)
+        if not valid:
+            raise HTTPException(status_code=400, detail=f"New name invalid: {err}")
+
         if clone_agent(name, req.new_name):
             return {"ok": True, "message": f"Agent '{name}' cloned to '{req.new_name}'"}
         raise HTTPException(status_code=400, detail=f"Failed to clone '{name}'")
@@ -1057,6 +1096,13 @@ async def api_fork_agent(name: str, req: ForkAgentRequest) -> dict[str, Any]:
     """
     try:
         from src.core.cloning import fork_agent
+
+        valid, err = validate_agent_name(name)
+        if not valid:
+            raise HTTPException(status_code=400, detail=f"Source name invalid: {err}")
+        valid, err = validate_agent_name(req.new_name)
+        if not valid:
+            raise HTTPException(status_code=400, detail=f"New name invalid: {err}")
 
         if fork_agent(name, req.new_name, req.changes):
             return {"ok": True, "message": f"Agent '{name}' forked to '{req.new_name}'"}
@@ -1342,8 +1388,15 @@ async def api_import_agent(req: ImportAgentRequest) -> dict[str, Any]:
     """
     try:
         from src.core.sharing import import_agent
+
+        valid, err = validate_file_path(req.file_path)
+        if not valid:
+            raise HTTPException(status_code=400, detail=err)
+
         name = import_agent(req.file_path)
         return {"ok": True, "name": name, "message": f"Agent '{name}' imported"}
+    except HTTPException:
+        raise
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Share file not found")
     except ValueError as ve:

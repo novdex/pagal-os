@@ -43,6 +43,32 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("PAGAL OS server started on port %d", config.web_port)
     yield
 
+    # Shutdown: stop all hands, MCP, A2A servers
+    logger.info("PAGAL OS server shutting down...")
+    try:
+        from src.core.hands import _active_hands, stop_hand
+        for name in list(_active_hands.keys()):
+            try:
+                stop_hand(name)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    try:
+        from src.core.mcp import stop_mcp_server
+        stop_mcp_server()
+    except Exception:
+        pass
+
+    try:
+        from src.core.a2a import stop_a2a_server
+        stop_a2a_server()
+    except Exception:
+        pass
+
+    logger.info("PAGAL OS server shutdown complete.")
+
 
 # Create FastAPI app
 app = FastAPI(
