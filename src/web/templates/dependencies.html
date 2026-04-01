@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+
+{% block title %}Dependencies — PAGAL OS{% endblock %}
+{% block nav_dependencies %}active{% endblock %}
+
+{% block content %}
+<h1>Agent Dependency Graph</h1>
+<p class="subtitle">Visual map of agents, tools, and model relationships</p>
+
+<!-- Controls -->
+<div style="display:flex; gap:1rem; margin-bottom:1.5rem; align-items:center; flex-wrap:wrap;">
+    <button onclick="loadGraph()" class="btn btn-primary">Refresh Graph</button>
+    <button onclick="exportDot()" class="btn btn-secondary">Export DOT</button>
+    <label style="display:flex; align-items:center; gap:0.5rem; font-size:0.9rem;">
+        <input type="checkbox" id="show-orphans" onchange="loadGraph()" checked>
+        Show orphan agents
+    </label>
+</div>
+
+<!-- Legend -->
+<div style="display:flex; gap:1.5rem; margin-bottom:1.5rem; flex-wrap:wrap; font-size:0.85rem;">
+    <span><span style="display:inline-block;width:14px;height:14px;background:#3b82f6;border-radius:3px;vertical-align:middle;margin-right:4px;"></span> Agent</span>
+    <span><span style="display:inline-block;width:14px;height:14px;background:#22c55e;border-radius:50%;vertical-align:middle;margin-right:4px;"></span> Tool</span>
+    <span><span style="display:inline-block;width:14px;height:14px;background:#a855f7;border-radius:3px;vertical-align:middle;margin-right:4px;transform:rotate(45deg);"></span> Model</span>
+    <span><span style="display:inline-block;width:14px;height:14px;background:#f59e0b;border-radius:3px;vertical-align:middle;margin-right:4px;"></span> Team</span>
+</div>
+
+<!-- Stats Row -->
+<div id="dep-stats" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:1rem; margin-bottom:1.5rem;"></div>
+
+<!-- Graph Container -->
+<div id="dep-graph" style="border:1px solid var(--border); border-radius:8px; padding:1.5rem; min-height:300px; overflow:auto; background:var(--bg);">
+    <p style="color:var(--muted); text-align:center;">Loading dependency graph...</p>
+</div>
+
+<!-- Detail Panel -->
+<div id="dep-detail" style="display:none; margin-top:1.5rem; border:1px solid var(--border); border-radius:8px; padding:1.5rem;">
+    <h3 id="dep-detail-title"></h3>
+    <div id="dep-detail-body"></div>
+</div>
+
+<!-- Orphans Section -->
+<div id="orphans-section" style="margin-top:1.5rem;">
+    <h3>Orphan Tools</h3>
+    <p class="subtitle">Tools not referenced by any agent</p>
+    <div id="orphan-tools" style="display:flex; gap:0.5rem; flex-wrap:wrap;"></div>
+
+    <h3 style="margin-top:1rem;">Orphan Agents</h3>
+    <p class="subtitle">Agents not in any team or workflow</p>
+    <div id="orphan-agents" style="display:flex; gap:0.5rem; flex-wrap:wrap;"></div>
+</div>
+
+<script>
+let graphData = null;
+
+async function loadGraph() {
+    try {
+        const data = await apiCall('/api/dependencies');
+        if (!data.ok) {
+            document.getElementById('dep-graph').innerHTML = '<p style="color:var(--error);">Failed to load graph</p>';
+            return;
+        }
+        graphData = data.graph;
+        renderGraph(graphData);
+        renderStats(graphData);
+        loadOrphans();
+    } catch (err) {
+        document.getElementById('dep-graph').innerHTML = '<p style="color:var(--error);">Error: ' + err.message + '</p>';
+    }
+}
+
+function renderStats(graph) {
+    const agents = Object.keys(graph.agents || {}).length;
+    const tools = Object.keys(graph.tools || {}).length;
+    const models = Object.keys(graph.models || {}).length;
+    const teams = (graph.teams || []).length;
+
+    document.getElementById('dep-stats').innerHTML = `
+        <div class="stat-card"><div class="stat-value">${agents}</div><div class="stat-label">Agents</div></div>
+        <div class="stat-card"><div class="stat-value">${tools}</div><div class="stat-label">Tools Used</div></div>
+        <div class="stat-card"><div class="stat-value">${models}</div><div class="stat-label">Models</div></div>
+        <div class="stat-card"><div class="stat-value">${teams}</div><div class="stat-label">Teams</div></div>
+    `;
+}
+
+function renderGraph(graph) {
+    const container = document.getElementById('dep-graph');
+    if (!graph.agents || Object.keys(graph.agents).length === 0) {
+        container.innerHTML = '<p style="color:var(--muted); text-align:center;">No agents found. Create some agents first.</p>';
+        return;
+    }
+
+    let html = '<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:1.5rem;">';
+
+    for (const [name, data] of Object.entries(graph.agents)) {
+        const toolsHtml = (data.tools || []).map(t =>
+            `<span style="display:inline-block; background:#22c55e; color:white; padding:2px 8px; border-radius:12px; font-size:0.75rem; margin:2px;">${t}</span>`
+        ).join('');
+
+        const modelShort = (data.model || 'default').split('/').pop().substring(0, 25);
+        const teamsHtml = (data.teams || []).map(t =>
+            `<span style="display:inline-block; background:#f59e0b; color:white; padding:2px 8px; border-radius:12px; font-size:0.75rem; margin:2px;">${t}</span>`
+        ).join('');
+        const wfHtml = (data.workflows || []).map(w =>
+            `<span style="display:inline-block; background:#6366f1; color:white; padding:2px 8px; border-radius:12px; font-size:0.75rem; margin:2px;">${w}</span>`
+        ).join('');
+
+        html += `
+        <div onclick="showDetail('${name}')" style="border:2px solid #3b82f6; border-radius:8px; padding:1rem; cursor:pointer; transition:transform 0.2s, box-shadow 0.2s;" onmouseenter="this.style.transform='scale(1.02)'; this.style.boxShadow='0 4px 12px rgba(59,130,246,0.3)'" onmouseleave="this.style.transform='scale(1)'; this.style.boxShadow='none'">
+            <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.5rem;">
+                <span style="display:inline-block; width:10px; height:10px; background:#3b82f6; border-radius:2px;"></span>
+                <strong>${name}</strong>
+            </div>
+            <div style="margin-bottom:0.5rem;">
+                <span style="font-size:0.8rem; color:var(--muted);">Model:</span>
+                <span style="display:inline-block; background:#a855f7; color:white; padding:2px 8px; border-radius:12px; font-size:0.75rem;">${modelShort}</span>
+            </div>
+            ${toolsHtml ? `<div style="margin-bottom:0.5rem;"><span style="font-size:0.8rem; color:var(--muted);">Tools:</span><br>${toolsHtml}</div>` : ''}
+            ${teamsHtml ? `<div style="margin-bottom:0.5rem;"><span style="font-size:0.8rem; color:var(--muted);">Teams:</span><br>${teamsHtml}</div>` : ''}
+            ${wfHtml ? `<div><span style="font-size:0.8rem; color:var(--muted);">Workflows:</span><br>${wfHtml}</div>` : ''}
+        </div>`;
+    }
+
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+async function showDetail(agentName) {
+    const panel = document.getElementById('dep-detail');
+    const title = document.getElementById('dep-detail-title');
+    const body = document.getElementById('dep-detail-body');
+
+    panel.style.display = 'block';
+    title.textContent = 'Agent: ' + agentName;
+    body.innerHTML = '<p>Loading...</p>';
+
+    try {
+        const data = await apiCall('/api/dependencies/' + agentName);
+        if (!data.ok) {
+            body.innerHTML = '<p style="color:var(--error);">' + (data.error || 'Not found') + '</p>';
+            return;
+        }
+
+        body.innerHTML = `
+            <p><strong>Model:</strong> ${data.model}</p>
+            <p><strong>Tools:</strong> ${(data.tools || []).join(', ') || 'none'}</p>
+            <p><strong>Teams:</strong> ${(data.teams || []).join(', ') || 'none'}</p>
+            <p><strong>Workflows:</strong> ${(data.workflows || []).join(', ') || 'none'}</p>
+        `;
+    } catch (err) {
+        body.innerHTML = '<p style="color:var(--error);">Error loading details</p>';
+    }
+}
+
+async function loadOrphans() {
+    try {
+        const data = await apiCall('/api/dependencies');
+        if (!data.ok) return;
+
+        const orphanTools = data.orphan_tools || [];
+        const orphanAgents = data.orphan_agents || [];
+
+        document.getElementById('orphan-tools').innerHTML = orphanTools.length
+            ? orphanTools.map(t => `<span style="background:var(--bg-alt); padding:4px 10px; border-radius:4px; font-size:0.85rem;">${t}</span>`).join('')
+            : '<span style="color:var(--muted);">None</span>';
+
+        document.getElementById('orphan-agents').innerHTML = orphanAgents.length
+            ? orphanAgents.map(a => `<span style="background:var(--bg-alt); padding:4px 10px; border-radius:4px; font-size:0.85rem;">${a}</span>`).join('')
+            : '<span style="color:var(--muted);">None</span>';
+    } catch (err) {
+        // Silently fail
+    }
+}
+
+async function exportDot() {
+    try {
+        const data = await apiCall('/api/dependencies/export-dot', { method: 'POST' });
+        if (data.ok) {
+            alert('DOT file exported to: ' + data.path);
+        } else {
+            alert('Export failed');
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+
+// Load on page ready
+loadGraph();
+</script>
+{% endblock %}

@@ -152,6 +152,13 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
     except Exception:
         approval_enabled = False
 
+    # --- Rate Limiter: check before starting ---
+    try:
+        from src.core.rate_limiter import check_rate_limit, record_call
+        rate_limiter_enabled = True
+    except Exception:
+        rate_limiter_enabled = False
+
     # --- Budget Governor: check before starting ---
     budget_ok = True
     try:
@@ -318,6 +325,21 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
                     "Agent '%s' loop %d/%d",
                     agent.name, loop_num + 1, max_loops,
                 )
+
+                # --- Rate Limiter: check before LLM call ---
+                if rate_limiter_enabled:
+                    try:
+                        rl_status = check_rate_limit(agent.name)
+                        if not rl_status["allowed"]:
+                            wait_secs = rl_status["retry_after_seconds"]
+                            logger.warning(
+                                "Rate limit hit for '%s', waiting %ds",
+                                agent.name, wait_secs,
+                            )
+                            time.sleep(min(wait_secs, 30))
+                        record_call(agent.name)
+                    except Exception:
+                        pass
 
                 # Call LLM (with self-healing on failure)
                 _llm_start = time.time()

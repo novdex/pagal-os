@@ -39,3 +39,8 @@ budget:
   daily_limit_usd: 1.00
   monthly_limit_usd: 10.00
   per_run_limit_usd: 0.10
+
+# Rate limiting defaults (per agent)
+rate_limit:
+  per_minute: 30
+  per_hour: 500

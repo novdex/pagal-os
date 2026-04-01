@@ -2447,3 +2447,482 @@ async def api_cancel_batch(batch_id: str) -> dict[str, Any]:
     except Exception as e:
         logger.error("Batch cancel error: %s", e)
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Export API Endpoints ---
+
+
+@router.get("/api/export/traces", tags=["export"])
+async def api_export_traces(
+    agent: str | None = None,
+    format: str = "json",
+    days: int = 30,
+) -> dict[str, Any]:
+    """Export agent traces as a downloadable file.
+
+    Args:
+        agent: Optional agent name filter.
+        format: Output format ('json' or 'csv').
+        days: Number of days of data to export.
+
+    Returns:
+        Dict with file path.
+    """
+    try:
+        from src.core.export import export_traces
+
+        path = export_traces(agent_name=agent, format=format, days=days)
+        return {"ok": True, "path": path}
+    except Exception as e:
+        logger.error("Export traces error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/export/analytics", tags=["export"])
+async def api_export_analytics(
+    agent: str | None = None,
+    format: str = "json",
+    days: int = 30,
+) -> dict[str, Any]:
+    """Export analytics/run data as a downloadable file.
+
+    Args:
+        agent: Optional agent name filter.
+        format: Output format ('json' or 'csv').
+        days: Number of days of data to export.
+
+    Returns:
+        Dict with file path.
+    """
+    try:
+        from src.core.export import export_analytics
+
+        path = export_analytics(agent_name=agent, format=format, days=days)
+        return {"ok": True, "path": path}
+    except Exception as e:
+        logger.error("Export analytics error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/export/knowledge", tags=["export"])
+async def api_export_knowledge(
+    agent: str | None = None,
+    format: str = "json",
+) -> dict[str, Any]:
+    """Export the knowledge graph.
+
+    Args:
+        agent: Optional agent name filter.
+        format: Output format ('json' or 'csv').
+
+    Returns:
+        Dict with file path.
+    """
+    try:
+        from src.core.export import export_knowledge
+
+        path = export_knowledge(agent_name=agent, format=format)
+        return {"ok": True, "path": path}
+    except Exception as e:
+        logger.error("Export knowledge error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/export/memory/{agent_name}", tags=["export"])
+async def api_export_memory(
+    agent_name: str,
+    format: str = "json",
+) -> dict[str, Any]:
+    """Export an agent's cross-session memory.
+
+    Args:
+        agent_name: Agent name.
+        format: Output format ('json' or 'csv').
+
+    Returns:
+        Dict with file path.
+    """
+    try:
+        from src.core.export import export_memory
+
+        path = export_memory(agent_name=agent_name, format=format)
+        return {"ok": True, "path": path}
+    except Exception as e:
+        logger.error("Export memory error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/export/all", tags=["export"])
+async def api_export_all(format: str = "json") -> dict[str, Any]:
+    """Export all data (traces, analytics, knowledge, memory) as a zip.
+
+    Args:
+        format: Format for files inside the zip ('json' or 'csv').
+
+    Returns:
+        Dict with zip file path.
+    """
+    try:
+        from src.core.export import export_all
+
+        path = export_all(format=format)
+        return {"ok": True, "path": path}
+    except Exception as e:
+        logger.error("Export all error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Backup & Restore API Endpoints ---
+
+
+@router.post("/api/backup", tags=["backup"])
+async def api_create_backup() -> dict[str, Any]:
+    """Create a full system backup.
+
+    Returns:
+        Dict with backup file path.
+    """
+    try:
+        from src.core.backup import create_backup
+
+        path = create_backup()
+        return {"ok": True, "path": path}
+    except Exception as e:
+        logger.error("Backup creation error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/backups", tags=["backup"])
+async def api_list_backups() -> dict[str, Any]:
+    """List all available backups.
+
+    Returns:
+        Dict with list of backup info.
+    """
+    try:
+        from src.core.backup import list_backups
+
+        return {"ok": True, "backups": list_backups()}
+    except Exception as e:
+        logger.error("List backups error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+class RestoreBackupRequest(BaseModel):
+    """Request body for restoring a backup."""
+
+    path: str
+
+
+@router.post("/api/restore", tags=["backup"])
+async def api_restore_backup(req: RestoreBackupRequest) -> dict[str, Any]:
+    """Restore a system backup from a zip file.
+
+    Args:
+        req: Request with backup file path.
+
+    Returns:
+        Dict with restored file list.
+    """
+    try:
+        from src.core.backup import restore_backup
+
+        result = restore_backup(req.path)
+        if not result["ok"]:
+            raise HTTPException(status_code=400, detail=result.get("error", "Restore failed"))
+        return result
+    except HTTPException:
+        raise
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Backup file not found")
+    except Exception as e:
+        logger.error("Restore backup error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/backup/size", tags=["backup"])
+async def api_backup_size() -> dict[str, Any]:
+    """Get the total size of data that would be backed up.
+
+    Returns:
+        Dict with size breakdown.
+    """
+    try:
+        from src.core.backup import get_backup_size
+
+        return {"ok": True, **get_backup_size()}
+    except Exception as e:
+        logger.error("Backup size error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Rate Limiting API Endpoints ---
+
+
+@router.get("/api/rate-limits", tags=["rate-limits"])
+async def api_get_rate_limits(agent: str | None = None) -> dict[str, Any]:
+    """Get rate limit config and usage for one or all agents.
+
+    Args:
+        agent: Optional agent name. If omitted, returns all.
+
+    Returns:
+        Dict with rate limit details.
+    """
+    try:
+        from src.core.rate_limiter import get_rate_limits, get_rate_stats
+
+        limits = get_rate_limits(agent)
+        stats = get_rate_stats()
+        return {"ok": True, "limits": limits, "stats": stats}
+    except Exception as e:
+        logger.error("Rate limits error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+class SetRateLimitRequest(BaseModel):
+    """Request body for setting rate limits."""
+
+    per_minute: int = 30
+    per_hour: int = 500
+
+
+@router.post("/api/rate-limits/{agent_name}", tags=["rate-limits"])
+async def api_set_rate_limit(
+    agent_name: str, req: SetRateLimitRequest,
+) -> dict[str, Any]:
+    """Set custom rate limits for an agent.
+
+    Args:
+        agent_name: Agent name.
+        req: Request with per_minute and per_hour limits.
+
+    Returns:
+        Dict with success status.
+    """
+    try:
+        from src.core.rate_limiter import set_rate_limit
+
+        set_rate_limit(agent_name, req.per_minute, req.per_hour)
+        return {
+            "ok": True,
+            "message": f"Rate limit set for '{agent_name}': {req.per_minute}/min, {req.per_hour}/hr",
+        }
+    except Exception as e:
+        logger.error("Set rate limit error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Dependencies API Endpoints ---
+
+
+@router.get("/api/dependencies", tags=["dependencies"])
+async def api_get_dependencies() -> dict[str, Any]:
+    """Get the full agent dependency graph.
+
+    Returns:
+        Dict with graph data, orphan tools, and orphan agents.
+    """
+    try:
+        from src.core.dependencies import (
+            build_dependency_graph,
+            find_orphan_agents,
+            find_orphan_tools,
+        )
+
+        graph = build_dependency_graph()
+        return {
+            "ok": True,
+            "graph": graph,
+            "orphan_tools": find_orphan_tools(),
+            "orphan_agents": find_orphan_agents(),
+        }
+    except Exception as e:
+        logger.error("Dependencies error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/dependencies/{agent_name}", tags=["dependencies"])
+async def api_get_agent_dependencies(agent_name: str) -> dict[str, Any]:
+    """Get dependencies for a specific agent.
+
+    Args:
+        agent_name: Agent name.
+
+    Returns:
+        Dict with agent dependency info.
+    """
+    try:
+        from src.core.dependencies import get_agent_dependencies
+
+        result = get_agent_dependencies(agent_name)
+        if not result.get("ok"):
+            raise HTTPException(status_code=404, detail=result.get("error", "Not found"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Agent dependencies error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/dependencies/export-dot", tags=["dependencies"])
+async def api_export_dependencies_dot() -> dict[str, Any]:
+    """Export the dependency graph as DOT (Graphviz) format.
+
+    Returns:
+        Dict with file path to the DOT file.
+    """
+    try:
+        from src.core.dependencies import export_graph_dot
+
+        path = export_graph_dot()
+        return {"ok": True, "path": path}
+    except Exception as e:
+        logger.error("Export DOT error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/dependencies/tools", tags=["dependencies"])
+async def api_get_tool_usage() -> dict[str, Any]:
+    """Get which agents use which tools.
+
+    Returns:
+        Dict mapping tool names to agent lists.
+    """
+    try:
+        from src.core.dependencies import get_tool_usage
+
+        return {"ok": True, "tool_usage": get_tool_usage()}
+    except Exception as e:
+        logger.error("Tool usage error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/dependencies/models", tags=["dependencies"])
+async def api_get_model_usage() -> dict[str, Any]:
+    """Get which agents use which models.
+
+    Returns:
+        Dict mapping model identifiers to agent lists.
+    """
+    try:
+        from src.core.dependencies import get_model_usage
+
+        return {"ok": True, "model_usage": get_model_usage()}
+    except Exception as e:
+        logger.error("Model usage error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Migration API Endpoints ---
+
+
+@router.post("/api/migrate/export/{agent_name}", tags=["migration"])
+async def api_migrate_export(agent_name: str) -> dict[str, Any]:
+    """Export an agent as a migration package.
+
+    Args:
+        agent_name: Agent name to export.
+
+    Returns:
+        Dict with migration package path.
+    """
+    try:
+        from src.core.migration import export_agent_full
+
+        path = export_agent_full(agent_name)
+        return {"ok": True, "path": path, "agent": agent_name}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+    except Exception as e:
+        logger.error("Migration export error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+class MigrateImportRequest(BaseModel):
+    """Request body for importing a migration package."""
+
+    path: str
+
+
+@router.post("/api/migrate/import", tags=["migration"])
+async def api_migrate_import(req: MigrateImportRequest) -> dict[str, Any]:
+    """Import an agent from a migration package.
+
+    Args:
+        req: Request with path to .pagal file.
+
+    Returns:
+        Dict with import result.
+    """
+    try:
+        from src.core.migration import import_agent_full
+
+        result = import_agent_full(req.path)
+        if not result.get("ok"):
+            raise HTTPException(status_code=400, detail=result.get("error", "Import failed"))
+        return result
+    except HTTPException:
+        raise
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Migration package not found")
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error("Migration import error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/migrate/validate", tags=["migration"])
+async def api_migrate_validate(req: MigrateImportRequest) -> dict[str, Any]:
+    """Validate a migration package without importing.
+
+    Args:
+        req: Request with path to .pagal file.
+
+    Returns:
+        Dict with validation result.
+    """
+    try:
+        from src.core.migration import validate_package
+
+        return validate_package(req.path)
+    except Exception as e:
+        logger.error("Migration validate error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/migrate/info", tags=["migration"])
+async def api_migrate_info(req: MigrateImportRequest) -> dict[str, Any]:
+    """Preview a migration package contents.
+
+    Args:
+        req: Request with path to .pagal file.
+
+    Returns:
+        Dict with package info.
+    """
+    try:
+        from src.core.migration import get_migration_info
+
+        return get_migration_info(req.path)
+    except Exception as e:
+        logger.error("Migration info error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Dependencies Web Page ---
+
+
+@router.get("/dependencies", response_class=HTMLResponse, tags=["web"])
+async def page_dependencies(request: Request) -> HTMLResponse:
+    """Serve the agent dependency graph visualization page.
+
+    Args:
+        request: FastAPI request object.
+
+    Returns:
+        Rendered HTML dependencies page.
+    """
+    return templates.TemplateResponse(request, "dependencies.html")

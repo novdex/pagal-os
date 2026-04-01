@@ -1613,6 +1613,252 @@ def cmd_health(args: argparse.Namespace) -> None:
                 )
 
 
+# --- Export Commands ---
+
+
+def cmd_export_traces(args: argparse.Namespace) -> None:
+    """Handle 'export traces' — export agent traces to CSV/JSON.
+
+    Args:
+        args: Parsed CLI arguments with optional 'agent', 'format', and 'days'.
+    """
+    from src.core.export import export_traces
+
+    agent = args.agent if hasattr(args, "agent") and args.agent else None
+    fmt = args.format if hasattr(args, "format") and args.format else "json"
+    days = args.days if hasattr(args, "days") and args.days else 30
+
+    path = export_traces(agent_name=agent, format=fmt, days=days)
+    print(f"Traces exported to: {path}")
+
+
+def cmd_export_analytics(args: argparse.Namespace) -> None:
+    """Handle 'export analytics' — export analytics data.
+
+    Args:
+        args: Parsed CLI arguments.
+    """
+    from src.core.export import export_analytics
+
+    agent = args.agent if hasattr(args, "agent") and args.agent else None
+    fmt = args.format if hasattr(args, "format") and args.format else "json"
+    days = args.days if hasattr(args, "days") and args.days else 30
+
+    path = export_analytics(agent_name=agent, format=fmt, days=days)
+    print(f"Analytics exported to: {path}")
+
+
+def cmd_export_knowledge(args: argparse.Namespace) -> None:
+    """Handle 'export knowledge' — export knowledge graph.
+
+    Args:
+        args: Parsed CLI arguments.
+    """
+    from src.core.export import export_knowledge
+
+    agent = args.agent if hasattr(args, "agent") and args.agent else None
+    fmt = args.format if hasattr(args, "format") and args.format else "json"
+
+    path = export_knowledge(agent_name=agent, format=fmt)
+    print(f"Knowledge exported to: {path}")
+
+
+def cmd_export_memory(args: argparse.Namespace) -> None:
+    """Handle 'export memory' — export agent memory.
+
+    Args:
+        args: Parsed CLI arguments with 'agent' field.
+    """
+    from src.core.export import export_memory
+
+    fmt = args.format if hasattr(args, "format") and args.format else "json"
+    path = export_memory(agent_name=args.agent, format=fmt)
+    print(f"Memory exported to: {path}")
+
+
+def cmd_export_all(args: argparse.Namespace) -> None:
+    """Handle 'export all' — export everything as a zip.
+
+    Args:
+        args: Parsed CLI arguments.
+    """
+    from src.core.export import export_all
+
+    fmt = args.format if hasattr(args, "format") and args.format else "json"
+    path = export_all(format=fmt)
+    print(f"All data exported to: {path}")
+
+
+# --- Backup & Restore Commands ---
+
+
+def cmd_backup(_args: argparse.Namespace) -> None:
+    """Handle 'backup' — create a full system backup.
+
+    Args:
+        _args: Parsed CLI arguments (unused).
+    """
+    from src.core.backup import create_backup, get_backup_size
+
+    size_info = get_backup_size()
+    print(f"Backing up {size_info['files_count']} files ({size_info['total_size_mb']} MB)...")
+
+    path = create_backup()
+    print(f"Backup created: {path}")
+
+
+def cmd_restore(args: argparse.Namespace) -> None:
+    """Handle 'restore' — restore from a backup file.
+
+    Args:
+        args: Parsed CLI arguments with 'path' field.
+    """
+    from src.core.backup import restore_backup
+
+    print(f"Restoring from: {args.path}")
+    result = restore_backup(args.path)
+
+    if result["ok"]:
+        print(f"Restored {len(result['restored'])} files successfully!")
+    else:
+        print(f"Restore failed: {result.get('error', 'unknown')}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_backup_list(_args: argparse.Namespace) -> None:
+    """Handle 'backup list' — list all available backups.
+
+    Args:
+        _args: Parsed CLI arguments (unused).
+    """
+    from src.core.backup import list_backups
+
+    backups = list_backups()
+    if not backups:
+        print("No backups found. Create one with: python pagal.py backup")
+        return
+
+    print(f"{'Filename':<45} {'Date':<25} {'Size (MB)'}")
+    print("-" * 80)
+    for b in backups:
+        date = b["date"][:19] if isinstance(b["date"], str) else str(b["date"])
+        print(f"{b['filename']:<45} {date:<25} {b['size_mb']}")
+
+
+# --- Migration Commands ---
+
+
+def cmd_migrate_export(args: argparse.Namespace) -> None:
+    """Handle 'migrate export' — export an agent for cross-machine migration.
+
+    Args:
+        args: Parsed CLI arguments with 'agent' field.
+    """
+    from src.core.migration import export_agent_full
+
+    print(f"Exporting agent '{args.agent}' for migration...")
+    try:
+        path = export_agent_full(args.agent)
+        print(f"Migration package created: {path}")
+        print(f"Transfer this file to the target machine and run:")
+        print(f"  python pagal.py migrate import {path}")
+    except FileNotFoundError:
+        print(f"Agent '{args.agent}' not found.", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_migrate_import(args: argparse.Namespace) -> None:
+    """Handle 'migrate import' — import a migration package.
+
+    Args:
+        args: Parsed CLI arguments with 'file' field.
+    """
+    from src.core.migration import import_agent_full
+
+    print(f"Importing migration package: {args.file}")
+    try:
+        result = import_agent_full(args.file)
+        if result["ok"]:
+            print(f"Agent '{result['agent']}' imported successfully!")
+            print(f"  Restored: {', '.join(result['imported'])}")
+            print(f"Run it with: python pagal.py run {result['agent']} \"your task\"")
+        else:
+            print(f"Import failed: {result.get('error', 'unknown')}", file=sys.stderr)
+            sys.exit(1)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_migrate_info(args: argparse.Namespace) -> None:
+    """Handle 'migrate info' — preview a migration package.
+
+    Args:
+        args: Parsed CLI arguments with 'file' field.
+    """
+    from src.core.migration import get_migration_info
+
+    info = get_migration_info(args.file)
+    if not info.get("ok"):
+        print(f"Error: {', '.join(info.get('errors', ['unknown']))}", file=sys.stderr)
+        sys.exit(1)
+
+    manifest = info.get("manifest", {})
+    print(f"Migration Package: {args.file}")
+    print(f"  Agent:        {manifest.get('name', '?')}")
+    print(f"  Exported at:  {manifest.get('exported_at', '?')}")
+    print(f"  Source:       {manifest.get('source_machine', '?')} ({manifest.get('source_os', '?')})")
+    print(f"  Size:         {info.get('size_mb', 0)} MB")
+    print(f"  Memory:       {info.get('memory_messages', 0)} messages, {info.get('memory_summaries', 0)} summaries")
+    print(f"  Knowledge:    {info.get('knowledge_nodes', 0)} nodes, {info.get('knowledge_edges', 0)} edges")
+    print(f"  Versions:     {info.get('versions_count', 0)}")
+    print(f"  Registry:     {'yes' if info.get('has_registry') else 'no'}")
+
+
+# --- Dependencies Commands ---
+
+
+def cmd_dependencies(_args: argparse.Namespace) -> None:
+    """Handle 'dependencies' — show the agent dependency graph.
+
+    Args:
+        _args: Parsed CLI arguments (unused).
+    """
+    from src.core.dependencies import build_dependency_graph, find_orphan_agents, find_orphan_tools
+
+    graph = build_dependency_graph()
+    agents = graph.get("agents", {})
+
+    if not agents:
+        print("No agents found. Create some agents first.")
+        return
+
+    print("Agent Dependency Graph")
+    print("=" * 60)
+
+    for name, data in agents.items():
+        tools_str = ", ".join(data["tools"]) if data["tools"] else "none"
+        model_short = data["model"].split("/")[-1][:25] if "/" in data["model"] else data["model"][:25]
+        print(f"\n  {name}")
+        print(f"    Model:     {model_short}")
+        print(f"    Tools:     {tools_str}")
+        if data["teams"]:
+            print(f"    Teams:     {', '.join(data['teams'])}")
+        if data["workflows"]:
+            print(f"    Workflows: {', '.join(data['workflows'])}")
+
+    orphan_tools = find_orphan_tools()
+    orphan_agents = find_orphan_agents()
+
+    if orphan_tools:
+        print(f"\nOrphan tools (unused): {', '.join(orphan_tools)}")
+    if orphan_agents:
+        print(f"Orphan agents (no team/workflow): {', '.join(orphan_agents)}")
+
+
 def main() -> None:
     """Entry point for the PAGAL OS CLI."""
     _setup_logging()
@@ -1900,6 +2146,65 @@ def main() -> None:
     health_p = subparsers.add_parser("health", help="Agent health monitoring")
     health_p.add_argument("agent", nargs="?", default=None, help="Agent name (optional, shows dashboard if omitted)")
 
+    # --- Export commands ---
+    export_p = subparsers.add_parser("export", help="Export logs, traces, analytics as CSV/JSON")
+    export_sub = export_p.add_subparsers(dest="export_command", help="Export sub-commands")
+
+    # pagal export traces [--agent <name>] [--format csv|json] [--days 30]
+    export_traces_p = export_sub.add_parser("traces", help="Export agent traces")
+    export_traces_p.add_argument("--agent", default=None, help="Filter by agent name")
+    export_traces_p.add_argument("--format", default="json", choices=["json", "csv"], help="Output format")
+    export_traces_p.add_argument("--days", type=int, default=30, help="Days of data to export")
+
+    # pagal export analytics [--agent <name>] [--format csv|json] [--days 30]
+    export_analytics_p = export_sub.add_parser("analytics", help="Export analytics data")
+    export_analytics_p.add_argument("--agent", default=None, help="Filter by agent name")
+    export_analytics_p.add_argument("--format", default="json", choices=["json", "csv"], help="Output format")
+    export_analytics_p.add_argument("--days", type=int, default=30, help="Days of data to export")
+
+    # pagal export knowledge [--agent <name>] [--format csv|json]
+    export_knowledge_p = export_sub.add_parser("knowledge", help="Export knowledge graph")
+    export_knowledge_p.add_argument("--agent", default=None, help="Filter by agent name")
+    export_knowledge_p.add_argument("--format", default="json", choices=["json", "csv"], help="Output format")
+
+    # pagal export memory <agent> [--format csv|json]
+    export_memory_p = export_sub.add_parser("memory", help="Export agent memory")
+    export_memory_p.add_argument("agent", help="Agent name")
+    export_memory_p.add_argument("--format", default="json", choices=["json", "csv"], help="Output format")
+
+    # pagal export all [--format csv|json]
+    export_all_p = export_sub.add_parser("all", help="Export everything as a zip")
+    export_all_p.add_argument("--format", default="json", choices=["json", "csv"], help="Output format")
+
+    # --- Backup commands ---
+    subparsers.add_parser("backup", help="Create a full system backup")
+
+    # pagal restore <path>
+    restore_p = subparsers.add_parser("restore", help="Restore from a backup file")
+    restore_p.add_argument("path", help="Path to backup zip file")
+
+    # pagal backup-list (separate command since 'backup' is standalone)
+    subparsers.add_parser("backup-list", help="List all available backups")
+
+    # --- Migrate commands ---
+    migrate_p = subparsers.add_parser("migrate", help="Cross-machine agent migration")
+    migrate_sub = migrate_p.add_subparsers(dest="migrate_command", help="Migration sub-commands")
+
+    # pagal migrate export <agent>
+    migrate_export_p = migrate_sub.add_parser("export", help="Export agent for migration")
+    migrate_export_p.add_argument("agent", help="Agent name to export")
+
+    # pagal migrate import <file>
+    migrate_import_p = migrate_sub.add_parser("import", help="Import a migration package")
+    migrate_import_p.add_argument("file", help="Path to .pagal migration file")
+
+    # pagal migrate info <file>
+    migrate_info_p = migrate_sub.add_parser("info", help="Preview a migration package")
+    migrate_info_p.add_argument("file", help="Path to .pagal migration file")
+
+    # --- Dependencies command ---
+    subparsers.add_parser("dependencies", help="Show agent dependency graph")
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -2046,6 +2351,36 @@ def main() -> None:
             batch_p.print_help()
         return
 
+    # Route export sub-commands
+    if args.command == "export":
+        export_commands = {
+            "traces": cmd_export_traces,
+            "analytics": cmd_export_analytics,
+            "knowledge": cmd_export_knowledge,
+            "memory": cmd_export_memory,
+            "all": cmd_export_all,
+        }
+        handler = export_commands.get(args.export_command)
+        if handler:
+            handler(args)
+        else:
+            export_p.print_help()
+        return
+
+    # Route migrate sub-commands
+    if args.command == "migrate":
+        migrate_commands = {
+            "export": cmd_migrate_export,
+            "import": cmd_migrate_import,
+            "info": cmd_migrate_info,
+        }
+        handler = migrate_commands.get(args.migrate_command)
+        if handler:
+            handler(args)
+        else:
+            migrate_p.print_help()
+        return
+
     commands = {
         "create": cmd_create,
         "run": cmd_run,
@@ -2074,6 +2409,10 @@ def main() -> None:
         "credits": cmd_credits,
         "notifications": cmd_notifications,
         "health": cmd_health,
+        "backup": cmd_backup,
+        "restore": cmd_restore,
+        "backup-list": cmd_backup_list,
+        "dependencies": cmd_dependencies,
     }
 
     handler = commands.get(args.command)
