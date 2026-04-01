@@ -159,6 +159,15 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
         budget_status = check_budget(agent.name)
         if not budget_status["ok"]:
             logger.warning("Agent '%s' budget exceeded", agent.name)
+            # --- Notifications: budget limit hit ---
+            try:
+                from src.core.notifications import send_notification
+                send_notification(
+                    "error", agent.name,
+                    f"Hit daily budget limit (${budget_status['daily_spent']:.4f}/${budget_status['daily_limit']:.2f})",
+                )
+            except Exception:
+                pass
             return AgentResult(
                 ok=False,
                 output="",
@@ -174,6 +183,16 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
         budget_enabled = True
     except Exception:
         budget_enabled = False
+
+    # --- Agent Registry: auto-register on run ---
+    try:
+        from src.core.registry import record_agent_run, verify_agent
+        if not verify_agent(agent.name):
+            from src.core.registry import register_agent as _register
+            _register(agent.name)
+        registry_enabled = True
+    except Exception:
+        registry_enabled = False
 
     # --- Model Router: auto-select model if set to 'auto' ---
     try:
@@ -384,6 +403,23 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
                         len(tools_used), "",
                     )
 
+                    # --- Registry: record run ---
+                    if registry_enabled:
+                        try:
+                            record_agent_run(agent.name)
+                        except Exception:
+                            pass
+
+                    # --- Notifications: agent completed ---
+                    try:
+                        from src.core.notifications import send_notification
+                        send_notification(
+                            "completed", agent.name,
+                            f"Task completed in {time.time() - start_time:.1f}s",
+                        )
+                    except Exception:
+                        pass
+
                     return AgentResult(
                         ok=True,
                         output=result["content"],
@@ -442,6 +478,15 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
                     if approval_enabled:
                         try:
                             if needs_approval(tool_name, tool_args, approval_mode):
+                                # --- Notifications: approval needed ---
+                                try:
+                                    from src.core.notifications import send_notification
+                                    send_notification(
+                                        "approval", agent.name,
+                                        f"Needs permission to use tool '{tool_name}'",
+                                    )
+                                except Exception:
+                                    pass
                                 approved = request_approval(
                                     agent.name, tool_name, tool_args, channel="cli",
                                 )
@@ -572,6 +617,16 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
                 pass
         if pm_enabled:
             update_process(process_pid, status="error", error=str(e))
+
+        # --- Notifications: agent error ---
+        try:
+            from src.core.notifications import send_notification
+            send_notification(
+                "error", agent.name,
+                f"Agent crashed: {str(e)[:120]}",
+            )
+        except Exception:
+            pass
 
         # --- Analytics: record crashed run ---
         _record_analytics(

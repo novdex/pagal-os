@@ -8,6 +8,31 @@
     <p>Manage and run your AI agents</p>
 </section>
 
+<!-- Credits & Notifications Summary Bar -->
+<section class="card" style="margin-bottom:1.5rem; padding:0.75rem 1.25rem; display:flex; gap:2rem; flex-wrap:wrap; align-items:center;">
+    <div style="display:flex; align-items:center; gap:0.5rem;">
+        <span style="font-size:1.2rem;">&#x1F4B0;</span>
+        <div>
+            <div style="font-size:0.75rem; color:var(--text-secondary);">Credit Balance</div>
+            <div id="dash-credit-balance" style="font-size:1.25rem; font-weight:bold; color:var(--accent);">--</div>
+        </div>
+    </div>
+    <div style="display:flex; align-items:center; gap:0.5rem;">
+        <span style="font-size:1.2rem;">&#x1F514;</span>
+        <div>
+            <div style="font-size:0.75rem; color:var(--text-secondary);">Unread Notifications</div>
+            <div id="dash-notif-count" style="font-size:1.25rem; font-weight:bold; color:var(--accent);">--</div>
+        </div>
+    </div>
+    <div style="display:flex; align-items:center; gap:0.5rem;">
+        <span style="font-size:1.2rem;">&#x1F4CB;</span>
+        <div>
+            <div style="font-size:0.75rem; color:var(--text-secondary);">Registered Agents</div>
+            <div id="dash-registry-count" style="font-size:1.25rem; font-weight:bold; color:var(--accent);">--</div>
+        </div>
+    </div>
+</section>
+
 <!-- Quick Run -->
 <section class="quick-run card">
     <h2>Quick Run</h2>
@@ -508,18 +533,61 @@
         }
     }
 
-    // Load hands, teams, knowledge, processes, memory, and approvals on page load
+    // --- Credits Dashboard ---
+    async function loadCredits() {
+        try {
+            const data = await apiCall('/api/credits');
+            if (data.ok !== false) {
+                document.getElementById('dash-credit-balance').textContent =
+                    (data.balance !== undefined ? data.balance.toFixed(1) : '--') + ' credits';
+            }
+        } catch (e) {
+            console.error('Failed to load credits:', e);
+        }
+    }
+
+    // --- Notifications Dashboard ---
+    async function loadDashNotifCount() {
+        try {
+            const data = await apiCall('/api/notifications?unread_only=true&limit=1');
+            if (data.ok !== false) {
+                document.getElementById('dash-notif-count').textContent = data.unread_count || 0;
+            }
+        } catch (e) {
+            console.error('Failed to load notification count:', e);
+        }
+    }
+
+    // --- Registry Dashboard ---
+    async function loadRegistryCount() {
+        try {
+            const data = await apiCall('/api/registry');
+            if (data.ok !== false) {
+                const agents = data.agents || [];
+                document.getElementById('dash-registry-count').textContent = agents.length;
+            }
+        } catch (e) {
+            console.error('Failed to load registry count:', e);
+        }
+    }
+
+    // Load hands, teams, knowledge, processes, memory, approvals, credits, notifs, registry
     loadHands();
     loadTeams();
     loadKnowledgeStats();
     loadProcesses();
     loadMemoryStats();
     loadApprovals();
+    loadCredits();
+    loadDashNotifCount();
+    loadRegistryCount();
 
     // Refresh hands every 10 seconds, processes every 5, approvals every 3
     setInterval(loadHands, 10000);
     setInterval(loadProcesses, 5000);
     setInterval(loadMemoryStats, 30000);
     setInterval(loadApprovals, 3000);
+    setInterval(loadCredits, 30000);
+    setInterval(loadDashNotifCount, 10000);
 </script>
 {% endblock %}

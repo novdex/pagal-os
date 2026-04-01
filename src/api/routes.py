@@ -1964,6 +1964,185 @@ async def api_debug_log(session_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+# --- Registry API Endpoints ---
+
+
+class UpdatePermissionsRequest(BaseModel):
+    """Request body for updating agent permissions."""
+
+    permissions: dict[str, Any] = {}
+
+
+@router.get("/api/registry", tags=["registry"])
+async def api_list_registry() -> dict[str, Any]:
+    """List all registered agents with their identities.
+
+    Returns:
+        Dict with list of agent identity records.
+    """
+    try:
+        from src.core.registry import list_registered
+        agents = list_registered()
+        return {"ok": True, "agents": agents}
+    except Exception as e:
+        logger.error("Registry list error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/registry/{agent_name}", tags=["registry"])
+async def api_get_registry_agent(agent_name: str) -> dict[str, Any]:
+    """Get identity and permissions for a specific agent.
+
+    Args:
+        agent_name: Agent name.
+
+    Returns:
+        Dict with agent identity record.
+    """
+    try:
+        from src.core.registry import get_agent_identity
+        identity = get_agent_identity(agent_name)
+        if not identity:
+            raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not registered")
+        return {"ok": True, **identity}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Registry get error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/registry/{agent_name}/permissions", tags=["registry"])
+async def api_update_permissions(agent_name: str, req: UpdatePermissionsRequest) -> dict[str, Any]:
+    """Update permissions for a registered agent.
+
+    Args:
+        agent_name: Agent name.
+        req: Request with permissions dict.
+
+    Returns:
+        Dict with success status.
+    """
+    try:
+        from src.core.registry import update_permissions
+        if update_permissions(agent_name, req.permissions):
+            return {"ok": True, "message": f"Permissions updated for '{agent_name}'"}
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not registered")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Registry permissions error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Credits API Endpoints ---
+
+
+@router.get("/api/credits", tags=["credits"])
+async def api_get_credits(user_id: str = "local") -> dict[str, Any]:
+    """Get credit balance for a user.
+
+    Args:
+        user_id: User identifier (default 'local').
+
+    Returns:
+        Dict with balance.
+    """
+    try:
+        from src.core.credits import get_balance
+        balance = get_balance(user_id)
+        return {"ok": True, "user_id": user_id, "balance": balance}
+    except Exception as e:
+        logger.error("Credits balance error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/credits/transactions", tags=["credits"])
+async def api_get_transactions(user_id: str = "local", limit: int = 50) -> dict[str, Any]:
+    """Get credit transaction history.
+
+    Args:
+        user_id: User identifier.
+        limit: Max number of transactions.
+
+    Returns:
+        Dict with transaction list.
+    """
+    try:
+        from src.core.credits import get_balance, get_transactions
+        transactions = get_transactions(user_id, limit)
+        balance = get_balance(user_id)
+        return {"ok": True, "balance": balance, "transactions": transactions}
+    except Exception as e:
+        logger.error("Credits transactions error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Notifications API Endpoints ---
+
+
+@router.get("/api/notifications", tags=["notifications"])
+async def api_get_notifications(
+    unread_only: bool = False,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Get notifications, optionally filtered to unread only.
+
+    Args:
+        unread_only: If true, return only unread notifications.
+        limit: Max number of notifications.
+
+    Returns:
+        Dict with notifications list and unread count.
+    """
+    try:
+        from src.core.notifications import get_notifications, get_unread_count
+        notifications = get_notifications(unread_only=unread_only, limit=limit)
+        unread = get_unread_count()
+        return {"ok": True, "notifications": notifications, "unread_count": unread}
+    except Exception as e:
+        logger.error("Notifications error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/notifications/{notification_id}/read", tags=["notifications"])
+async def api_mark_notification_read(notification_id: str) -> dict[str, Any]:
+    """Mark a notification as read.
+
+    Args:
+        notification_id: The notification ID.
+
+    Returns:
+        Dict with success status.
+    """
+    try:
+        from src.core.notifications import mark_read
+        if mark_read(notification_id):
+            return {"ok": True, "message": f"Notification {notification_id} marked read"}
+        raise HTTPException(status_code=404, detail=f"Notification '{notification_id}' not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Mark read error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/notifications/read-all", tags=["notifications"])
+async def api_mark_all_notifications_read() -> dict[str, Any]:
+    """Mark all notifications as read.
+
+    Returns:
+        Dict with success status.
+    """
+    try:
+        from src.core.notifications import mark_all_read
+        mark_all_read()
+        return {"ok": True, "message": "All notifications marked read"}
+    except Exception as e:
+        logger.error("Mark all read error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 # --- Web Page Routes ---
 
 
@@ -2071,6 +2250,32 @@ async def page_debugger(request: Request) -> HTMLResponse:
         Rendered HTML debugger page.
     """
     return templates.TemplateResponse(request, "debugger.html")
+
+
+@router.get("/gallery", response_class=HTMLResponse, tags=["web"])
+async def page_gallery(request: Request) -> HTMLResponse:
+    """Serve the agent templates gallery page.
+
+    Args:
+        request: FastAPI request object.
+
+    Returns:
+        Rendered HTML gallery page.
+    """
+    return templates.TemplateResponse(request, "gallery.html")
+
+
+@router.get("/playground", response_class=HTMLResponse, tags=["web"])
+async def page_playground(request: Request) -> HTMLResponse:
+    """Serve the live agent playground page.
+
+    Args:
+        request: FastAPI request object.
+
+    Returns:
+        Rendered HTML playground page.
+    """
+    return templates.TemplateResponse(request, "playground.html")
 
 
 @router.get("/settings", response_class=HTMLResponse, tags=["web"])

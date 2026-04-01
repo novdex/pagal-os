@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% block title %}Gallery - PAGAL OS{% endblock %}
+{% block nav_gallery %}active{% endblock %}
+
+{% block content %}
+<section class="page-header">
+    <h1>Agent Templates Gallery</h1>
+    <p>Discover, preview, and deploy agents in one click</p>
+</section>
+
+<!-- Search & Filter Bar -->
+<section class="card" style="margin-bottom:1.5rem; padding:1rem 1.25rem;">
+    <div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:center;">
+        <input type="text" id="gallery-search" placeholder="Search agents..." style="flex:1; min-width:200px; padding:0.5rem 0.75rem; border:1px solid var(--border); border-radius:6px; background:var(--bg-secondary); color:var(--text);">
+        <select id="gallery-category" style="padding:0.5rem 0.75rem; border:1px solid var(--border); border-radius:6px; background:var(--bg-secondary); color:var(--text);">
+            <option value="all">All Categories</option>
+            <option value="Productivity">Productivity</option>
+            <option value="Research">Research</option>
+            <option value="Development">Development</option>
+            <option value="Social Media">Social Media</option>
+            <option value="Finance">Finance</option>
+            <option value="Creative">Creative</option>
+        </select>
+        <select id="gallery-sort" style="padding:0.5rem 0.75rem; border:1px solid var(--border); border-radius:6px; background:var(--bg-secondary); color:var(--text);">
+            <option value="popular">Sort: Popular</option>
+            <option value="newest">Sort: Newest</option>
+            <option value="rating">Sort: Highest Rated</option>
+            <option value="name">Sort: A-Z</option>
+        </select>
+    </div>
+</section>
+
+<!-- Featured Section -->
+<section id="featured-section" style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:1rem; color:var(--accent);">Featured Agents</h2>
+    <div id="featured-grid" class="agents-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); gap:1.25rem;"></div>
+</section>
+
+<!-- All Agents Grid -->
+<section id="all-section">
+    <h2 style="margin-bottom:1rem;">All Templates</h2>
+    <div id="gallery-grid" class="agents-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); gap:1.25rem;"></div>
+    <div id="gallery-empty" style="display:none; text-align:center; padding:2rem;" class="card">
+        <h3>No agents found</h3>
+        <p class="text-muted">Try a different search or category.</p>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Category icons/emojis
+    const categoryIcons = {
+        'Productivity': '&#x1F4BC;',
+        'Research': '&#x1F50D;',
+        'Development': '&#x1F6E0;',
+        'Social Media': '&#x1F4F1;',
+        'Finance': '&#x1F4B0;',
+        'Creative': '&#x1F3A8;',
+    };
+
+    const categoryColors = {
+        'Productivity': '#3b82f6',
+        'Research': '#8b5cf6',
+        'Development': '#ef4444',
+        'Social Media': '#ec4899',
+        'Finance': '#10b981',
+        'Creative': '#f59e0b',
+    };
+
+    let allAgents = [];
+
+    function renderStars(rating) {
+        const full = Math.floor(rating || 0);
+        const half = (rating || 0) - full >= 0.5 ? 1 : 0;
+        const empty = 5 - full - half;
+        let html = '';
+        for (let i = 0; i < full; i++) html += '<span style="color:#f59e0b;">&#9733;</span>';
+        for (let i = 0; i < half; i++) html += '<span style="color:#f59e0b;">&#9734;</span>';
+        for (let i = 0; i < empty; i++) html += '<span style="color:var(--text-secondary);">&#9734;</span>';
+        return html;
+    }
+
+    function createAgentCard(agent, featured) {
+        const icon = categoryIcons[agent.category] || '&#x1F916;';
+        const catColor = categoryColors[agent.category] || 'var(--accent)';
+        const tools = (agent.tools || []).slice(0, 4).map(t =>
+            `<span style="display:inline-block; padding:2px 6px; margin:2px; font-size:0.7rem; border-radius:4px; background:var(--bg-secondary); color:var(--text-secondary);">${escapeHtml(t)}</span>`
+        ).join('');
+
+        const border = featured ? `border-left:3px solid ${catColor};` : '';
+        const stars = renderStars(agent.rating);
+        const installs = agent.installs || agent.downloads || 0;
+
+        return `
+        <div class="card" style="padding:1.25rem; ${border} position:relative; transition:transform 0.15s; cursor:default;"
+             onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='none'">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:0.5rem;">
+                <div style="display:flex; align-items:center; gap:0.5rem;">
+                    <span style="font-size:1.5rem;">${icon}</span>
+                    <h3 style="margin:0; font-size:1rem;">${escapeHtml(agent.name)}</h3>
+                </div>
+                <span style="display:inline-block; padding:2px 8px; font-size:0.7rem; border-radius:10px; background:${catColor}20; color:${catColor}; border:1px solid ${catColor}40;">
+                    ${escapeHtml(agent.category || 'General')}
+                </span>
+            </div>
+            <p style="color:var(--text-secondary); font-size:0.85rem; margin:0.5rem 0; min-height:2.4rem; line-height:1.2rem;">
+                ${escapeHtml(agent.description || '').substring(0, 100)}
+            </p>
+            <div style="margin:0.5rem 0;">${tools}</div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:0.75rem; padding-top:0.5rem; border-top:1px solid var(--border);">
+                <div style="display:flex; align-items:center; gap:0.75rem;">
+                    <span style="font-size:0.8rem;">${stars}</span>
+                    <span style="font-size:0.75rem; color:var(--text-secondary);">${installs} installs</span>
+                </div>
+                <button class="btn btn-primary btn-sm" onclick="deployAgent('${escapeHtml(agent.id)}')">Deploy</button>
+            </div>
+        </div>`;
+    }
+
+    function renderGallery() {
+        const search = document.getElementById('gallery-search').value.toLowerCase();
+        const category = document.getElementById('gallery-category').value;
+        const sort = document.getElementById('gallery-sort').value;
+
+        let filtered = allAgents.filter(a => {
+            const matchSearch = !search ||
+                (a.name || '').toLowerCase().includes(search) ||
+                (a.description || '').toLowerCase().includes(search) ||
+                (a.tools || []).join(' ').toLowerCase().includes(search);
+            const matchCategory = category === 'all' || a.category === category;
+            return matchSearch && matchCategory;
+        });
+
+        // Sort
+        if (sort === 'popular') {
+            filtered.sort((a, b) => (b.installs || b.downloads || 0) - (a.installs || a.downloads || 0));
+        } else if (sort === 'newest') {
+            filtered.sort((a, b) => (b.id || '').localeCompare(a.id || ''));
+        } else if (sort === 'rating') {
+            filtered.sort((a, b) => (b.rating || 0) - (a.rating || 0));
+        } else if (sort === 'name') {
+            filtered.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        }
+
+        const featured = filtered.filter(a => a.featured);
+        const rest = filtered;
+
+        // Featured
+        const featuredGrid = document.getElementById('featured-grid');
+        const featuredSection = document.getElementById('featured-section');
+        if (featured.length > 0 && !search && category === 'all') {
+            featuredSection.style.display = 'block';
+            featuredGrid.innerHTML = featured.slice(0, 4).map(a => createAgentCard(a, true)).join('');
+        } else {
+            featuredSection.style.display = 'none';
+        }
+
+        // All
+        const grid = document.getElementById('gallery-grid');
+        const empty = document.getElementById('gallery-empty');
+        if (rest.length > 0) {
+            grid.style.display = 'grid';
+            empty.style.display = 'none';
+            grid.innerHTML = rest.map(a => createAgentCard(a, false)).join('');
+        } else {
+            grid.style.display = 'none';
+            empty.style.display = 'block';
+        }
+    }
+
+    async function loadGallery() {
+        const data = await apiCall('/api/marketplace');
+        if (data.ok && data.agents) {
+            allAgents = data.agents;
+            renderGallery();
+        }
+    }
+
+    async function deployAgent(agentId) {
+        if (!confirm(`Deploy agent "${agentId}"? This will install it to your agents.`)) return;
+        const data = await apiCall(`/api/marketplace/install/${encodeURIComponent(agentId)}`, { method: 'POST' });
+        if (data.ok) {
+            alert(`Agent "${agentId}" deployed successfully! Go to My Agents to run it.`);
+        } else {
+            alert('Deploy failed: ' + (data.detail || 'Unknown error'));
+        }
+    }
+
+    // Event listeners
+    document.getElementById('gallery-search').addEventListener('input', renderGallery);
+    document.getElementById('gallery-category').addEventListener('change', renderGallery);
+    document.getElementById('gallery-sort').addEventListener('change', renderGallery);
+
+    // Initial load
+    loadGallery();
+</script>
+{% endblock %}

@@ -1305,6 +1305,143 @@ def _print_debug_result(result: dict) -> None:
         print(f"  (step={state.get('current_step', '?')}, status={state.get('status', '?')})")
 
 
+# --- Registry Commands ---
+
+
+def cmd_registry_list(_args: argparse.Namespace) -> None:
+    """Handle 'registry list' -- list all registered agents.
+
+    Args:
+        _args: Parsed CLI arguments (unused).
+    """
+    from src.core.registry import list_registered
+
+    agents = list_registered()
+    if not agents:
+        print("No agents registered. Agents are auto-registered on first run.")
+        return
+
+    print(f"{'Name':<20} {'Agent ID':<38} {'Status':<10} {'Runs':<8} {'Registered'}")
+    print("-" * 100)
+    for a in agents:
+        print(
+            f"{a.get('name', '?'):<20} {a.get('agent_id', '?'):<38} "
+            f"{a.get('status', '?'):<10} {a.get('total_runs', 0):<8} "
+            f"{a.get('registered_at', '?')[:19]}"
+        )
+
+
+def cmd_registry_info(args: argparse.Namespace) -> None:
+    """Handle 'registry info' -- show identity for a specific agent.
+
+    Args:
+        args: Parsed CLI arguments with 'agent' field.
+    """
+    from src.core.registry import get_agent_identity
+
+    identity = get_agent_identity(args.agent)
+    if not identity:
+        print(f"Agent '{args.agent}' is not registered.")
+        return
+
+    print(f"Agent Identity: {args.agent}")
+    print(f"  ID:              {identity.get('agent_id', '?')}")
+    print(f"  Status:          {identity.get('status', '?')}")
+    print(f"  Registered:      {identity.get('registered_at', '?')}")
+    print(f"  Last active:     {identity.get('last_active', '?')}")
+    print(f"  Total runs:      {identity.get('total_runs', 0)}")
+    print(f"  Allowed tools:   {', '.join(identity.get('allowed_tools', []))}")
+    print(f"  Denied tools:    {', '.join(identity.get('denied_tools', [])) or 'none'}")
+    print(f"  Network access:  {identity.get('network_access', True)}")
+    print(f"  Requires approval: {identity.get('requires_approval', False)}")
+    print(f"  Daily budget:    ${identity.get('max_budget_daily', 1.0):.2f}")
+
+
+def cmd_registry_revoke(args: argparse.Namespace) -> None:
+    """Handle 'registry revoke' -- deactivate an agent's identity.
+
+    Args:
+        args: Parsed CLI arguments with 'agent' field.
+    """
+    from src.core.registry import revoke_agent
+
+    if revoke_agent(args.agent):
+        print(f"Agent '{args.agent}' has been revoked.")
+    else:
+        print(f"Agent '{args.agent}' not found in registry.", file=sys.stderr)
+        sys.exit(1)
+
+
+# --- Credits Commands ---
+
+
+def cmd_credits(args: argparse.Namespace) -> None:
+    """Handle 'credits' command -- show credit balance and transactions.
+
+    Args:
+        args: Parsed CLI arguments with optional 'user' field.
+    """
+    from src.core.credits import get_balance, get_transactions, init_credits_db
+
+    init_credits_db()
+    user_id = args.user if hasattr(args, "user") and args.user else "local"
+
+    balance = get_balance(user_id)
+    print(f"Credit Balance ({user_id}): {balance:.1f} credits")
+
+    if hasattr(args, "history") and args.history:
+        transactions = get_transactions(user_id, limit=20)
+        if transactions:
+            print(f"\n{'Amount':<12} {'Agent':<20} {'Description':<35} {'Date'}")
+            print("-" * 85)
+            for t in transactions:
+                sign = "+" if t["amount"] > 0 else ""
+                print(
+                    f"{sign}{t['amount']:<11.1f} {(t['agent_name'] or '-'):<20} "
+                    f"{(t['description'] or '-')[:35]:<35} {(t['created_at'] or '')[:19]}"
+                )
+        else:
+            print("\nNo transactions yet.")
+
+
+# --- Notifications Commands ---
+
+
+def cmd_notifications(args: argparse.Namespace) -> None:
+    """Handle 'notifications' command -- list notifications.
+
+    Args:
+        args: Parsed CLI arguments with optional flags.
+    """
+    from src.core.notifications import get_notifications, get_unread_count, mark_all_read
+
+    if hasattr(args, "mark_all_read") and args.mark_all_read:
+        mark_all_read()
+        print("All notifications marked as read.")
+        return
+
+    unread_only = hasattr(args, "unread") and args.unread
+    notifications = get_notifications(unread_only=unread_only, limit=30)
+    unread = get_unread_count()
+
+    print(f"Notifications ({unread} unread)")
+    print("-" * 80)
+
+    if not notifications:
+        print("No notifications.")
+        return
+
+    for n in notifications:
+        icon = {"completed": "[OK]", "approval": "[!!]", "error": "[ERR]", "info": "[i]"}
+        status = icon.get(n.get("type", "info"), "[?]")
+        read_mark = " " if n.get("read") else "*"
+        ts = n.get("timestamp", "")[:19]
+        print(
+            f"{read_mark} {status:<6} {n.get('agent_name', '?'):<20} "
+            f"{n.get('message', '')[:40]:<42} {ts}"
+        )
+
+
 def cmd_doctor(_args: argparse.Namespace) -> None:
     """Handle the 'doctor' command -- run system health check.
 
@@ -1549,6 +1686,31 @@ def main() -> None:
     memory_stats_p = memory_sub.add_parser("stats", help="Show memory statistics")
     memory_stats_p.add_argument("--agent", default=None, help="Filter by agent name")
 
+    # --- Registry commands ---
+    registry_p = subparsers.add_parser("registry", help="Agent identity and permissions registry")
+    registry_sub = registry_p.add_subparsers(dest="registry_command", help="Registry sub-commands")
+
+    # pagal registry list
+    registry_sub.add_parser("list", help="List all registered agents")
+
+    # pagal registry info <agent>
+    registry_info_p = registry_sub.add_parser("info", help="Show agent identity details")
+    registry_info_p.add_argument("agent", help="Agent name")
+
+    # pagal registry revoke <agent>
+    registry_revoke_p = registry_sub.add_parser("revoke", help="Revoke an agent's identity")
+    registry_revoke_p.add_argument("agent", help="Agent name to revoke")
+
+    # --- Credits commands ---
+    credits_p = subparsers.add_parser("credits", help="View credit balance and transactions")
+    credits_p.add_argument("--user", default="local", help="User ID (default: local)")
+    credits_p.add_argument("--history", action="store_true", help="Show transaction history")
+
+    # --- Notifications commands ---
+    notif_p = subparsers.add_parser("notifications", help="View agent notifications")
+    notif_p.add_argument("--unread", action="store_true", help="Show only unread notifications")
+    notif_p.add_argument("--mark-all-read", action="store_true", help="Mark all notifications as read")
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -1665,6 +1827,20 @@ def main() -> None:
             webhook_p.print_help()
         return
 
+    # Route registry sub-commands
+    if args.command == "registry":
+        registry_commands = {
+            "list": cmd_registry_list,
+            "info": cmd_registry_info,
+            "revoke": cmd_registry_revoke,
+        }
+        handler = registry_commands.get(args.registry_command)
+        if handler:
+            handler(args)
+        else:
+            registry_p.print_help()
+        return
+
     commands = {
         "create": cmd_create,
         "run": cmd_run,
@@ -1690,6 +1866,8 @@ def main() -> None:
         "doctor": cmd_doctor,
         "budget": cmd_budget,
         "debug": cmd_debug,
+        "credits": cmd_credits,
+        "notifications": cmd_notifications,
     }
 
     handler = commands.get(args.command)

@@ -1,0 +1,343 @@
+{% extends "base.html" %}
+{% block title %}Playground - PAGAL OS{% endblock %}
+{% block nav_playground %}active{% endblock %}
+
+{% block content %}
+<section class="page-header">
+    <h1>Agent Playground</h1>
+    <p>Test any agent live in your browser — no install needed</p>
+</section>
+
+<div style="display:grid; grid-template-columns:280px 1fr 320px; gap:1.25rem; min-height:600px;">
+    <!-- LEFT: Agent Selector + Info -->
+    <div>
+        <div class="card" style="padding:1rem; margin-bottom:1rem;">
+            <h3 style="margin:0 0 0.75rem 0; font-size:0.9rem;">Select Agent</h3>
+            <select id="pg-agent-select" style="width:100%; padding:0.5rem; border:1px solid var(--border); border-radius:6px; background:var(--bg-secondary); color:var(--text); margin-bottom:0.75rem;">
+                <option value="">-- Choose an agent --</option>
+            </select>
+            <div id="pg-agent-info" style="display:none;">
+                <div id="pg-agent-icon" style="font-size:2rem; text-align:center; margin:0.5rem 0;">&#x1F916;</div>
+                <h4 id="pg-agent-name" style="text-align:center; margin:0.25rem 0;"></h4>
+                <p id="pg-agent-desc" style="font-size:0.8rem; color:var(--text-secondary); text-align:center; margin:0.25rem 0;"></p>
+                <div style="margin-top:0.75rem; padding-top:0.5rem; border-top:1px solid var(--border);">
+                    <div style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:0.25rem;">Model</div>
+                    <div id="pg-agent-model" style="font-size:0.8rem;"></div>
+                </div>
+                <div style="margin-top:0.5rem;">
+                    <div style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:0.25rem;">Tools</div>
+                    <div id="pg-agent-tools" style="font-size:0.8rem;"></div>
+                </div>
+                <div style="margin-top:0.5rem;">
+                    <div style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:0.25rem;">Status</div>
+                    <div id="pg-agent-status" style="font-size:0.8rem;"></div>
+                </div>
+            </div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:0.5rem;">
+            <a href="/store" class="btn btn-secondary btn-sm" style="text-align:center;">Install From Store</a>
+            <a href="/builder" class="btn btn-secondary btn-sm" style="text-align:center;">Create Your Own</a>
+        </div>
+    </div>
+
+    <!-- CENTER: Chat Interface -->
+    <div class="card" style="display:flex; flex-direction:column; padding:0; overflow:hidden;">
+        <div style="padding:0.75rem 1rem; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+            <h3 style="margin:0; font-size:0.9rem;">Chat</h3>
+            <button class="btn btn-secondary btn-sm" onclick="clearChat()" style="font-size:0.75rem;">Clear</button>
+        </div>
+        <div id="pg-chat-messages" style="flex:1; overflow-y:auto; padding:1rem; display:flex; flex-direction:column; gap:0.75rem;">
+            <div style="text-align:center; color:var(--text-secondary); padding:2rem; font-size:0.85rem;">
+                Select an agent and type a task to begin.
+            </div>
+        </div>
+        <div style="padding:0.75rem 1rem; border-top:1px solid var(--border);">
+            <form id="pg-chat-form" style="display:flex; gap:0.5rem;">
+                <input type="text" id="pg-chat-input" placeholder="Type a task for the agent..." style="flex:1; padding:0.6rem 0.75rem; border:1px solid var(--border); border-radius:6px; background:var(--bg-secondary); color:var(--text);" autocomplete="off">
+                <button type="submit" class="btn btn-primary" id="pg-send-btn">Send</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- RIGHT: Live Trace/Log -->
+    <div class="card" style="display:flex; flex-direction:column; padding:0; overflow:hidden;">
+        <div style="padding:0.75rem 1rem; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+            <h3 style="margin:0; font-size:0.9rem;">Live Trace</h3>
+            <span id="pg-trace-status" style="font-size:0.7rem; padding:2px 8px; border-radius:10px; background:var(--bg-secondary); color:var(--text-secondary);">Idle</span>
+        </div>
+        <div id="pg-trace-log" style="flex:1; overflow-y:auto; padding:0.75rem; font-family:monospace; font-size:0.75rem; line-height:1.6;">
+            <div style="color:var(--text-secondary);">Trace events will appear here as the agent works...</div>
+        </div>
+    </div>
+</div>
+
+<!-- Install Button -->
+<div id="pg-install-bar" style="display:none; margin-top:1rem; text-align:center;" class="card">
+    <p style="margin:0.5rem 0;">Like this agent? Install it permanently.</p>
+    <button class="btn btn-primary" onclick="installCurrentAgent()">Install This Agent</button>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let currentAgent = null;
+    let tracePoller = null;
+
+    // Load agents into dropdown
+    async function loadAgents() {
+        const select = document.getElementById('pg-agent-select');
+
+        // Load installed agents
+        const installed = await apiCall('/api/agents');
+        if (installed.ok && installed.agents) {
+            const group1 = document.createElement('optgroup');
+            group1.label = 'Installed Agents';
+            for (const a of installed.agents) {
+                const opt = document.createElement('option');
+                opt.value = a.name;
+                opt.textContent = a.name;
+                opt.dataset.source = 'installed';
+                group1.appendChild(opt);
+            }
+            if (group1.children.length > 0) select.appendChild(group1);
+        }
+
+        // Load marketplace agents
+        const market = await apiCall('/api/marketplace');
+        if (market.ok && market.agents) {
+            const group2 = document.createElement('optgroup');
+            group2.label = 'Marketplace (Try Before Install)';
+            for (const a of market.agents) {
+                const opt = document.createElement('option');
+                opt.value = a.id;
+                opt.textContent = a.name;
+                opt.dataset.source = 'marketplace';
+                opt.dataset.desc = a.description || '';
+                opt.dataset.tools = (a.tools || []).join(',');
+                group2.appendChild(opt);
+            }
+            if (group2.children.length > 0) select.appendChild(group2);
+        }
+    }
+
+    // Show agent info when selected
+    document.getElementById('pg-agent-select').addEventListener('change', async function() {
+        const name = this.value;
+        const info = document.getElementById('pg-agent-info');
+        const installBar = document.getElementById('pg-install-bar');
+
+        if (!name) {
+            info.style.display = 'none';
+            installBar.style.display = 'none';
+            currentAgent = null;
+            return;
+        }
+
+        currentAgent = name;
+        info.style.display = 'block';
+
+        // Try installed agent first
+        try {
+            const data = await apiCall(`/api/agents/${encodeURIComponent(name)}/status`);
+            if (data.ok) {
+                document.getElementById('pg-agent-name').textContent = name;
+                document.getElementById('pg-agent-desc').textContent = data.description || 'Installed agent';
+                document.getElementById('pg-agent-model').textContent = data.model || 'default';
+                document.getElementById('pg-agent-status').innerHTML =
+                    `<span class="status-dot ${data.status === 'running' ? 'status-running' : 'status-idle'}"></span> ${data.status || 'idle'}`;
+                installBar.style.display = 'none';
+                return;
+            }
+        } catch(e) {}
+
+        // Marketplace agent
+        const opt = this.options[this.selectedIndex];
+        document.getElementById('pg-agent-name').textContent = opt.textContent;
+        document.getElementById('pg-agent-desc').textContent = opt.dataset.desc || 'Marketplace agent';
+        document.getElementById('pg-agent-model').textContent = 'default';
+        const tools = opt.dataset.tools ? opt.dataset.tools.split(',') : [];
+        document.getElementById('pg-agent-tools').innerHTML = tools.map(t =>
+            `<span class="badge" style="margin:2px; font-size:0.7rem;">${escapeHtml(t)}</span>`
+        ).join('') || '<span class="text-muted">none</span>';
+        document.getElementById('pg-agent-status').innerHTML = '<span class="text-muted">not installed</span>';
+        installBar.style.display = 'block';
+    });
+
+    // Chat form submission
+    document.getElementById('pg-chat-form').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        const input = document.getElementById('pg-chat-input');
+        const task = input.value.trim();
+        if (!task || !currentAgent) return;
+
+        const messagesDiv = document.getElementById('pg-chat-messages');
+        const sendBtn = document.getElementById('pg-send-btn');
+
+        // Clear initial message
+        if (messagesDiv.querySelector('.text-muted, div[style*="text-align:center"]')) {
+            messagesDiv.innerHTML = '';
+        }
+
+        // Add user message
+        messagesDiv.innerHTML += `
+            <div style="align-self:flex-end; max-width:80%; padding:0.6rem 1rem; background:var(--accent); color:white; border-radius:12px 12px 2px 12px; font-size:0.85rem;">
+                ${escapeHtml(task)}
+            </div>`;
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        input.value = '';
+
+        // Disable send
+        sendBtn.disabled = true;
+        sendBtn.textContent = 'Working...';
+
+        // Update trace status
+        document.getElementById('pg-trace-status').textContent = 'Running';
+        document.getElementById('pg-trace-status').style.background = 'var(--accent)';
+        document.getElementById('pg-trace-status').style.color = 'white';
+
+        // Add loading indicator
+        const loadingId = 'loading-' + Date.now();
+        messagesDiv.innerHTML += `
+            <div id="${loadingId}" style="align-self:flex-start; max-width:80%; padding:0.6rem 1rem; background:var(--bg-secondary); border-radius:12px 12px 12px 2px; font-size:0.85rem; color:var(--text-secondary);">
+                <span class="loading-dots">Thinking</span>
+            </div>`;
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+        // Start trace polling
+        startTracePolling();
+
+        // Run agent
+        try {
+            const data = await apiCall(`/api/agents/${encodeURIComponent(currentAgent)}/run`, {
+                method: 'POST',
+                body: JSON.stringify({ task: task }),
+            });
+
+            // Remove loading indicator
+            const loadEl = document.getElementById(loadingId);
+            if (loadEl) loadEl.remove();
+
+            if (data.ok) {
+                messagesDiv.innerHTML += `
+                    <div style="align-self:flex-start; max-width:80%; padding:0.6rem 1rem; background:var(--bg-secondary); border:1px solid var(--border); border-radius:12px 12px 12px 2px; font-size:0.85rem; white-space:pre-wrap;">
+                        ${escapeHtml(data.output || 'Done (no output).')}
+                    </div>`;
+
+                // Show tools used
+                if (data.tools_used && data.tools_used.length > 0) {
+                    const toolBadges = data.tools_used.map(t =>
+                        `<span class="badge" style="font-size:0.7rem; margin:1px;">${escapeHtml(t)}</span>`
+                    ).join('');
+                    messagesDiv.innerHTML += `
+                        <div style="font-size:0.7rem; color:var(--text-secondary); padding:0.25rem 0;">
+                            Tools used: ${toolBadges} | Duration: ${(data.duration_seconds || 0).toFixed(1)}s
+                        </div>`;
+                }
+            } else {
+                messagesDiv.innerHTML += `
+                    <div style="align-self:flex-start; max-width:80%; padding:0.6rem 1rem; background:#fee2e2; color:#dc2626; border-radius:12px 12px 12px 2px; font-size:0.85rem;">
+                        Error: ${escapeHtml(data.error || data.detail || 'Agent failed')}
+                    </div>`;
+            }
+        } catch(err) {
+            const loadEl = document.getElementById(loadingId);
+            if (loadEl) loadEl.remove();
+            messagesDiv.innerHTML += `
+                <div style="align-self:flex-start; max-width:80%; padding:0.6rem 1rem; background:#fee2e2; color:#dc2626; border-radius:12px 12px 12px 2px; font-size:0.85rem;">
+                    Error: ${escapeHtml(err.message || 'Request failed')}
+                </div>`;
+        }
+
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        sendBtn.disabled = false;
+        sendBtn.textContent = 'Send';
+        stopTracePolling();
+    });
+
+    function clearChat() {
+        document.getElementById('pg-chat-messages').innerHTML = `
+            <div style="text-align:center; color:var(--text-secondary); padding:2rem; font-size:0.85rem;">
+                Select an agent and type a task to begin.
+            </div>`;
+        document.getElementById('pg-trace-log').innerHTML =
+            '<div style="color:var(--text-secondary);">Trace events will appear here as the agent works...</div>';
+    }
+
+    // Trace polling
+    function startTracePolling() {
+        const traceLog = document.getElementById('pg-trace-log');
+        traceLog.innerHTML = '';
+
+        const addTraceEntry = (type, content) => {
+            const typeColors = {
+                'llm_call': '#3b82f6',
+                'tool_call': '#f59e0b',
+                'tool_result': '#10b981',
+                'error': '#ef4444',
+            };
+            const color = typeColors[type] || 'var(--text-secondary)';
+            traceLog.innerHTML += `<div style="margin-bottom:4px;"><span style="color:${color}; font-weight:bold;">[${escapeHtml(type)}]</span> ${escapeHtml(content.substring(0, 120))}</div>`;
+            traceLog.scrollTop = traceLog.scrollHeight;
+        };
+
+        let lastEventCount = 0;
+        tracePoller = setInterval(async () => {
+            try {
+                const data = await apiCall(`/api/traces?agent=${encodeURIComponent(currentAgent)}&limit=1`);
+                if (data.ok && data.traces && data.traces.length > 0) {
+                    const latestTrace = data.traces[0];
+                    const traceData = await apiCall(`/api/traces/${encodeURIComponent(latestTrace.run_id)}`);
+                    if (traceData.ok && traceData.events) {
+                        const newEvents = traceData.events.slice(lastEventCount);
+                        for (const evt of newEvents) {
+                            addTraceEntry(evt.event_type || 'info', evt.content || '');
+                        }
+                        lastEventCount = traceData.events.length;
+                    }
+                }
+            } catch(e) {
+                // Trace polling is best-effort
+            }
+        }, 2000);
+    }
+
+    function stopTracePolling() {
+        if (tracePoller) {
+            clearInterval(tracePoller);
+            tracePoller = null;
+        }
+        document.getElementById('pg-trace-status').textContent = 'Idle';
+        document.getElementById('pg-trace-status').style.background = 'var(--bg-secondary)';
+        document.getElementById('pg-trace-status').style.color = 'var(--text-secondary)';
+    }
+
+    async function installCurrentAgent() {
+        if (!currentAgent) return;
+        const data = await apiCall(`/api/marketplace/install/${encodeURIComponent(currentAgent)}`, { method: 'POST' });
+        if (data.ok) {
+            alert(`Agent "${currentAgent}" installed! It's now in your My Agents page.`);
+            document.getElementById('pg-install-bar').style.display = 'none';
+        } else {
+            alert('Install failed: ' + (data.detail || 'Unknown error'));
+        }
+    }
+
+    // CSS animation for loading dots
+    const style = document.createElement('style');
+    style.textContent = `
+        .loading-dots::after {
+            content: '';
+            animation: dots 1.5s steps(3, end) infinite;
+        }
+        @keyframes dots {
+            0% { content: '.'; }
+            33% { content: '..'; }
+            66% { content: '...'; }
+        }
+    `;
+    document.head.appendChild(style);
+
+    // Initial load
+    loadAgents();
+</script>
+{% endblock %}
