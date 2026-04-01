@@ -8,3 +8,4 @@ duckduckgo-search>=4.0
 beautifulsoup4>=4.12.0
 pytest>=8.0.0
 pypdf>=4.0
+edge-tts>=6.1.0

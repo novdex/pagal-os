@@ -84,6 +84,18 @@ class RegisterWebhookRequest(BaseModel):
     config: dict[str, Any] = {}
 
 
+class ImportAgentRequest(BaseModel):
+    """Request body for importing a shared agent."""
+
+    file_path: str
+
+
+class RollbackRequest(BaseModel):
+    """Request body for rolling back an agent version."""
+
+    version: int
+
+
 class StartHandRequest(BaseModel):
     """Request body for starting a scheduled hand."""
 
@@ -1195,6 +1207,266 @@ async def api_delete_webhook(webhook_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+# --- Versioning API Endpoints ---
+
+
+@router.get("/api/agents/{name}/versions", tags=["versioning"])
+async def api_list_versions(name: str) -> dict[str, Any]:
+    """List all saved versions for an agent.
+
+    Args:
+        name: Agent name.
+
+    Returns:
+        Dict with list of version info.
+    """
+    try:
+        from src.core.versioning import list_versions
+        versions = list_versions(name)
+        return {"ok": True, "agent": name, "versions": versions}
+    except Exception as e:
+        logger.error("List versions error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/agents/{name}/rollback/{version}", tags=["versioning"])
+async def api_rollback_agent(name: str, version: int) -> dict[str, Any]:
+    """Rollback an agent to a previous version.
+
+    Args:
+        name: Agent name.
+        version: Version number to restore.
+
+    Returns:
+        Dict with success status.
+    """
+    try:
+        from src.core.versioning import rollback
+        if rollback(name, version):
+            return {"ok": True, "message": f"Agent '{name}' rolled back to v{version}"}
+        raise HTTPException(
+            status_code=404,
+            detail=f"Version {version} not found for agent '{name}'",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Rollback error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/agents/{name}/versions/{version}", tags=["versioning"])
+async def api_get_version(name: str, version: int) -> dict[str, Any]:
+    """Get the content of a specific agent version.
+
+    Args:
+        name: Agent name.
+        version: Version number.
+
+    Returns:
+        Dict with version content.
+    """
+    try:
+        from src.core.versioning import get_version
+        result = get_version(name, version)
+        if not result.get("ok"):
+            raise HTTPException(status_code=404, detail=result.get("error", "Not found"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Get version error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/agents/{name}/versions/diff", tags=["versioning"])
+async def api_diff_versions(name: str, v1: int = 1, v2: int = 2) -> dict[str, Any]:
+    """Show differences between two versions of an agent.
+
+    Args:
+        name: Agent name.
+        v1: First version number.
+        v2: Second version number.
+
+    Returns:
+        Dict with differences.
+    """
+    try:
+        from src.core.versioning import diff_versions
+        return diff_versions(name, v1, v2)
+    except Exception as e:
+        logger.error("Diff versions error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Sharing API Endpoints ---
+
+
+@router.post("/api/agents/{name}/share", tags=["sharing"])
+async def api_share_agent(name: str) -> dict[str, Any]:
+    """Export an agent and generate a share code.
+
+    Args:
+        name: Agent name.
+
+    Returns:
+        Dict with share code and file path.
+    """
+    try:
+        from src.core.sharing import export_agent
+        import json as _json
+
+        file_path = export_agent(name)
+        data = _json.loads(Path(file_path).read_text(encoding="utf-8"))
+        return {
+            "ok": True,
+            "share_code": data.get("share_code", ""),
+            "file_path": file_path,
+        }
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+    except Exception as e:
+        logger.error("Share agent error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/agents/import", tags=["sharing"])
+async def api_import_agent(req: ImportAgentRequest) -> dict[str, Any]:
+    """Import an agent from a shared JSON file.
+
+    Args:
+        req: Request with file_path.
+
+    Returns:
+        Dict with imported agent name.
+    """
+    try:
+        from src.core.sharing import import_agent
+        name = import_agent(req.file_path)
+        return {"ok": True, "name": name, "message": f"Agent '{name}' imported"}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Share file not found")
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error("Import agent error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Encryption API Endpoints ---
+
+
+@router.post("/api/agents/{name}/encrypt", tags=["encryption"])
+async def api_encrypt_agent(name: str) -> dict[str, Any]:
+    """Encrypt an agent's memory and config files.
+
+    Args:
+        name: Agent name.
+
+    Returns:
+        Dict with success status.
+    """
+    try:
+        from src.core.encryption import encrypt_agent_memory
+        if encrypt_agent_memory(name):
+            return {"ok": True, "message": f"Agent '{name}' encrypted"}
+        return {"ok": False, "message": f"No files found to encrypt for '{name}'"}
+    except Exception as e:
+        logger.error("Encrypt agent error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/agents/{name}/decrypt", tags=["encryption"])
+async def api_decrypt_agent(name: str) -> dict[str, Any]:
+    """Decrypt and return an agent's encrypted files.
+
+    Args:
+        name: Agent name.
+
+    Returns:
+        Dict with decrypted file contents.
+    """
+    try:
+        from src.core.encryption import decrypt_agent_memory
+        results = decrypt_agent_memory(name)
+        return {"ok": True, "files": results}
+    except Exception as e:
+        logger.error("Decrypt agent error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Traces API Endpoints ---
+
+
+@router.get("/api/traces", tags=["traces"])
+async def api_list_traces(
+    agent: str | None = None,
+    limit: int = 30,
+) -> dict[str, Any]:
+    """List recent traces, optionally filtered by agent.
+
+    Args:
+        agent: Optional agent name filter.
+        limit: Max number of traces.
+
+    Returns:
+        Dict with list of trace summaries.
+    """
+    try:
+        from src.core.observability import get_recent_traces
+        traces = get_recent_traces(agent_name=agent, limit=limit)
+        return {"ok": True, "traces": traces}
+    except Exception as e:
+        logger.error("List traces error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/traces/{run_id}", tags=["traces"])
+async def api_get_trace(run_id: str) -> dict[str, Any]:
+    """Get all events for a specific trace run.
+
+    Args:
+        run_id: The run ID.
+
+    Returns:
+        Dict with list of events.
+    """
+    try:
+        from src.core.observability import get_trace
+        events = get_trace(run_id)
+        if not events:
+            raise HTTPException(status_code=404, detail=f"Trace '{run_id}' not found")
+        return {"ok": True, "run_id": run_id, "events": events}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Get trace error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/traces/{run_id}/summary", tags=["traces"])
+async def api_trace_summary(run_id: str) -> dict[str, Any]:
+    """Get a summary of a trace run.
+
+    Args:
+        run_id: The run ID.
+
+    Returns:
+        Dict with summary stats.
+    """
+    try:
+        from src.core.observability import get_trace_summary
+        result = get_trace_summary(run_id)
+        if not result.get("ok"):
+            raise HTTPException(status_code=404, detail=result.get("error", "Not found"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Trace summary error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 # --- Web Page Routes ---
 
 
@@ -1276,6 +1548,19 @@ async def page_analytics(request: Request) -> HTMLResponse:
         Rendered HTML analytics page.
     """
     return templates.TemplateResponse(request, "analytics.html")
+
+
+@router.get("/traces", response_class=HTMLResponse, tags=["web"])
+async def page_traces(request: Request) -> HTMLResponse:
+    """Serve the traces page.
+
+    Args:
+        request: FastAPI request object.
+
+    Returns:
+        Rendered HTML traces page.
+    """
+    return templates.TemplateResponse(request, "traces.html")
 
 
 @router.get("/settings", response_class=HTMLResponse, tags=["web"])

@@ -299,6 +299,92 @@ def handle_telegram_message(
         return f"Error: {e}"
 
 
+def _handle_voice_message(
+    bot_token: str,
+    chat_id: int,
+    voice: dict,
+    agent_name: str,
+) -> None:
+    """Download a Telegram voice message, transcribe, run agent, reply with voice.
+
+    Args:
+        bot_token: Telegram bot token.
+        chat_id: Chat ID to reply to.
+        voice: The 'voice' object from the Telegram update.
+        agent_name: Name of the agent to route the message to.
+    """
+    base_url = _TELEGRAM_API.format(token=bot_token)
+    file_id = voice.get("file_id", "")
+    if not file_id:
+        send_telegram_message(bot_token, chat_id, "Could not read voice message.")
+        return
+
+    # Step 1: Get file path from Telegram
+    try:
+        with httpx.Client(timeout=15) as client:
+            resp = client.get(f"{base_url}/getFile", params={"file_id": file_id})
+            resp.raise_for_status()
+            file_path = resp.json().get("result", {}).get("file_path", "")
+    except Exception as e:
+        logger.error("Failed to get voice file path: %s", e)
+        send_telegram_message(bot_token, chat_id, f"Failed to download voice: {e}")
+        return
+
+    # Step 2: Download the file
+    try:
+        download_url = f"https://api.telegram.org/file/bot{bot_token}/{file_path}"
+        with httpx.Client(timeout=30) as client:
+            resp = client.get(download_url)
+            resp.raise_for_status()
+            audio_bytes = resp.content
+    except Exception as e:
+        logger.error("Failed to download voice file: %s", e)
+        send_telegram_message(bot_token, chat_id, f"Failed to download voice: {e}")
+        return
+
+    # Step 3: Process through voice pipeline
+    try:
+        from src.channels.voice import process_voice_message
+
+        text_response, audio_response = process_voice_message(audio_bytes, agent_name)
+
+        # Send text response
+        send_telegram_message(bot_token, chat_id, text_response)
+
+        # Send voice note back if we have audio
+        if audio_response:
+            _send_telegram_voice(bot_token, chat_id, audio_response)
+    except Exception as e:
+        logger.error("Voice pipeline error: %s", e)
+        send_telegram_message(bot_token, chat_id, f"Voice processing error: {e}")
+
+
+def _send_telegram_voice(bot_token: str, chat_id: int, audio_bytes: bytes) -> bool:
+    """Send a voice note to a Telegram chat.
+
+    Args:
+        bot_token: Telegram bot token.
+        chat_id: Target chat ID.
+        audio_bytes: MP3/OGG audio data.
+
+    Returns:
+        True if sent successfully.
+    """
+    import io
+
+    url = f"{_TELEGRAM_API.format(token=bot_token)}/sendVoice"
+    try:
+        files = {"voice": ("response.mp3", io.BytesIO(audio_bytes), "audio/mpeg")}
+        data = {"chat_id": str(chat_id)}
+        with httpx.Client(timeout=30) as client:
+            resp = client.post(url, data=data, files=files)
+            resp.raise_for_status()
+            return resp.json().get("ok", False)
+    except Exception as e:
+        logger.error("Failed to send voice note: %s", e)
+        return False
+
+
 def start_telegram_bot(bot_token: str, default_agent: str = "research_agent") -> None:
     """Start polling for Telegram messages and route them to agents.
 
@@ -354,6 +440,25 @@ def start_telegram_bot(bot_token: str, default_agent: str = "research_agent") ->
                 username = message.get("from", {}).get("username", "")
                 first_name = message.get("from", {}).get("first_name", "")
                 display_name = username or first_name or "user"
+
+                # --- Handle voice messages ---
+                voice = message.get("voice")
+                if chat_id and voice:
+                    try:
+                        _handle_voice_message(
+                            bot_token, chat_id, voice,
+                            _chat_agents.get(chat_id, default_agent),
+                        )
+                    except Exception as ve:
+                        logger.error("Voice handling error: %s", ve)
+                        try:
+                            send_telegram_message(
+                                bot_token, chat_id,
+                                f"Voice processing error: {ve}",
+                            )
+                        except Exception:
+                            pass
+                    continue
 
                 if not chat_id or not text:
                     continue

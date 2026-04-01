@@ -655,6 +655,228 @@ def cmd_analytics(args: argparse.Namespace) -> None:
 # --- Telegram Command ---
 
 
+# --- Versioning Commands ---
+
+
+def cmd_versions(args: argparse.Namespace) -> None:
+    """Handle 'versions' — list all versions of an agent.
+
+    Args:
+        args: Parsed CLI arguments with 'agent' field.
+    """
+    from src.core.versioning import list_versions
+
+    versions = list_versions(args.agent)
+    if not versions:
+        print(f"No versions found for agent '{args.agent}'.")
+        return
+
+    print(f"Versions for agent '{args.agent}':")
+    print(f"  {'Version':<10} {'Date':<30} {'Size'}")
+    print("  " + "-" * 55)
+    for v in versions:
+        size = f"{v['size_bytes']} bytes"
+        print(f"  v{v['version']:<9} {v['date']:<30} {size}")
+
+
+def cmd_rollback(args: argparse.Namespace) -> None:
+    """Handle 'rollback' — restore an agent to a previous version.
+
+    Args:
+        args: Parsed CLI arguments with 'agent' and 'version' fields.
+    """
+    from src.core.versioning import rollback
+
+    if rollback(args.agent, args.version):
+        print(f"Agent '{args.agent}' rolled back to version {args.version}.")
+    else:
+        print(f"Failed to rollback agent '{args.agent}' to version {args.version}.", file=sys.stderr)
+        sys.exit(1)
+
+
+# --- Encryption Commands ---
+
+
+def cmd_encrypt(args: argparse.Namespace) -> None:
+    """Handle 'encrypt' — encrypt an agent's memory and config.
+
+    Args:
+        args: Parsed CLI arguments with 'agent' field.
+    """
+    from src.core.encryption import encrypt_agent_memory
+
+    if encrypt_agent_memory(args.agent):
+        print(f"Agent '{args.agent}' memory and config encrypted.")
+    else:
+        print(f"No files found to encrypt for agent '{args.agent}'.")
+
+
+def cmd_decrypt(args: argparse.Namespace) -> None:
+    """Handle 'decrypt' — decrypt and display an agent's encrypted files.
+
+    Args:
+        args: Parsed CLI arguments with 'agent' field.
+    """
+    from src.core.encryption import decrypt_agent_memory
+
+    results = decrypt_agent_memory(args.agent)
+    if not results:
+        print(f"No encrypted files found for agent '{args.agent}'.")
+        return
+
+    for r in results:
+        print(f"\n--- {r['file']} ---")
+        if "content" in r:
+            print(r["content"][:500])
+        elif "error" in r:
+            print(f"Error: {r['error']}")
+
+
+# --- Sharing Commands ---
+
+
+def cmd_share(args: argparse.Namespace) -> None:
+    """Handle 'share' — export an agent and generate a share code.
+
+    Args:
+        args: Parsed CLI arguments with 'agent' field.
+    """
+    from src.core.sharing import export_agent
+
+    try:
+        file_path = export_agent(args.agent)
+        # The share code is embedded in the exported file
+        import json
+        from pathlib import Path
+
+        data = json.loads(Path(file_path).read_text(encoding="utf-8"))
+        code = data.get("share_code", "N/A")
+        print(f"Agent '{args.agent}' shared!")
+        print(f"  Share code: {code}")
+        print(f"  File: {file_path}")
+        print(f"\nSend the file to someone, or use the share code on the same machine.")
+    except FileNotFoundError:
+        print(f"Agent '{args.agent}' not found.", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error sharing agent: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_import(args: argparse.Namespace) -> None:
+    """Handle 'import' — import an agent from a shared file or code.
+
+    Args:
+        args: Parsed CLI arguments with 'source' field (file path or share code).
+    """
+    from pathlib import Path
+
+    source = args.source
+
+    # Check if it's a file path
+    if Path(source).exists():
+        from src.core.sharing import import_agent
+        try:
+            name = import_agent(source)
+            print(f"Agent '{name}' imported successfully!")
+            print(f"Run it with: python pagal.py run {name} \"your task here\"")
+        except Exception as e:
+            print(f"Error importing agent: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        # Try as a share code
+        from src.core.sharing import get_shared_agent, import_agent as _import
+        agent_data = get_shared_agent(source)
+        if agent_data:
+            # Write temp file and import
+            import json
+            import tempfile
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False, encoding="utf-8",
+            ) as tmp:
+                json.dump(agent_data, tmp, indent=2)
+                tmp_path = tmp.name
+            try:
+                name = _import(tmp_path)
+                print(f"Agent '{name}' imported from share code '{source}'!")
+                print(f"Run it with: python pagal.py run {name} \"your task here\"")
+            except Exception as e:
+                print(f"Error importing agent: {e}", file=sys.stderr)
+                sys.exit(1)
+            finally:
+                Path(tmp_path).unlink(missing_ok=True)
+        else:
+            print(f"Share code '{source}' not found, and it's not a valid file path.", file=sys.stderr)
+            sys.exit(1)
+
+
+# --- Traces Commands ---
+
+
+def cmd_traces(args: argparse.Namespace) -> None:
+    """Handle 'traces' — list recent agent traces.
+
+    Args:
+        args: Parsed CLI arguments with optional 'agent' field.
+    """
+    from src.core.observability import get_recent_traces
+
+    agent_name = args.agent if hasattr(args, "agent") and args.agent else None
+    traces = get_recent_traces(agent_name=agent_name, limit=20)
+
+    if not traces:
+        print("No traces recorded yet. Run an agent to generate traces.")
+        return
+
+    print(f"{'Run ID':<14} {'Agent':<20} {'Events':<8} {'Duration':<12} {'Tokens':<10} {'Started'}")
+    print("-" * 90)
+    for t in traces:
+        dur = f"{t.get('total_duration_ms', 0)}ms"
+        started = t.get("started_at", "")
+        if isinstance(started, str) and len(started) > 19:
+            started = started[:19]
+        print(
+            f"{t['run_id']:<14} {t['agent_name']:<20} "
+            f"{t.get('event_count', 0):<8} {dur:<12} "
+            f"{t.get('total_tokens', 0):<10} {started}"
+        )
+
+
+def cmd_trace_detail(args: argparse.Namespace) -> None:
+    """Handle 'trace' — show detailed events for a specific trace run.
+
+    Args:
+        args: Parsed CLI arguments with 'run_id' field.
+    """
+    from src.core.observability import get_trace, get_trace_summary
+
+    summary = get_trace_summary(args.run_id)
+    if not summary.get("ok"):
+        print(f"Trace '{args.run_id}' not found.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Trace: {args.run_id}")
+    print(f"  Agent:      {summary.get('agent_name', '')}")
+    print(f"  Events:     {summary.get('event_count', 0)}")
+    print(f"  Duration:   {summary.get('total_time_ms', 0)}ms")
+    print(f"  Tokens:     {summary.get('total_tokens', 0)}")
+    print(f"  Tool calls: {summary.get('tool_calls_count', 0)}")
+    print(f"  LLM calls:  {summary.get('llm_calls_count', 0)}")
+    print(f"  Errors:     {summary.get('errors_count', 0)}")
+    print()
+
+    events = get_trace(args.run_id)
+    for evt in events:
+        etype = evt.get("event_type", "")
+        content = evt.get("content", "")[:120]
+        dur = evt.get("duration_ms", 0)
+        dur_str = f" ({dur}ms)" if dur else ""
+        print(f"  [{etype:<12}]{dur_str} {content}")
+
+
+# --- Telegram Command ---
+
+
 def cmd_telegram(_args: argparse.Namespace) -> None:
     """Handle 'telegram' — start the Telegram bot.
 
@@ -836,6 +1058,35 @@ def main() -> None:
     kill_p = subparsers.add_parser("kill", help="Kill an agent process")
     kill_p.add_argument("pid", help="Process ID to kill")
 
+    # --- Versioning commands ---
+    versions_p = subparsers.add_parser("versions", help="List all versions of an agent")
+    versions_p.add_argument("agent", help="Agent name")
+
+    rollback_p = subparsers.add_parser("rollback", help="Rollback an agent to a previous version")
+    rollback_p.add_argument("agent", help="Agent name")
+    rollback_p.add_argument("version", type=int, help="Version number to restore")
+
+    # --- Encryption commands ---
+    encrypt_p = subparsers.add_parser("encrypt", help="Encrypt an agent's memory and config")
+    encrypt_p.add_argument("agent", help="Agent name to encrypt")
+
+    decrypt_p = subparsers.add_parser("decrypt", help="Decrypt and show an agent's encrypted files")
+    decrypt_p.add_argument("agent", help="Agent name to decrypt")
+
+    # --- Sharing commands ---
+    share_p = subparsers.add_parser("share", help="Share an agent (export + generate share code)")
+    share_p.add_argument("agent", help="Agent name to share")
+
+    import_p = subparsers.add_parser("import", help="Import an agent from a shared file or code")
+    import_p.add_argument("source", help="File path or share code")
+
+    # --- Traces commands ---
+    traces_p = subparsers.add_parser("traces", help="List recent agent traces")
+    traces_p.add_argument("--agent", default=None, help="Filter by agent name")
+
+    trace_p = subparsers.add_parser("trace", help="View detailed trace events for a run")
+    trace_p.add_argument("run_id", help="Run ID to view")
+
     # --- Memory commands ---
     memory_p = subparsers.add_parser("memory", help="Cross-session memory management")
     memory_sub = memory_p.add_subparsers(dest="memory_command", help="Memory sub-commands")
@@ -951,6 +1202,14 @@ def main() -> None:
         "fork": cmd_fork,
         "diff": cmd_diff,
         "analytics": cmd_analytics,
+        "versions": cmd_versions,
+        "rollback": cmd_rollback,
+        "encrypt": cmd_encrypt,
+        "decrypt": cmd_decrypt,
+        "share": cmd_share,
+        "import": cmd_import,
+        "traces": cmd_traces,
+        "trace": cmd_trace_detail,
     }
 
     handler = commands.get(args.command)

@@ -109,6 +109,15 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
     except Exception:
         pm_enabled = False
 
+    # --- Observability: start a trace for this run ---
+    trace_run_id = ""
+    try:
+        from src.core.observability import log_trace, start_trace
+        trace_run_id = start_trace(agent.name)
+        tracing_enabled = True
+    except Exception:
+        tracing_enabled = False
+
     # --- Cross-Session Memory: generate session ID and inject context ---
     session_id = ""
     try:
@@ -243,12 +252,27 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
                 )
 
                 # Call LLM (with self-healing on failure)
+                _llm_start = time.time()
                 result = call_llm(
                     messages=messages,
                     model=agent.model,
                     tools=tool_schemas,
                     timeout=60,
                 )
+                _llm_dur = int((time.time() - _llm_start) * 1000)
+
+                # --- Trace: log LLM call ---
+                if tracing_enabled:
+                    try:
+                        _llm_summary = (result.get("content") or "")[:200]
+                        log_trace(
+                            trace_run_id, agent.name, "llm_call",
+                            f"Model={agent.model} | Response: {_llm_summary}",
+                            duration_ms=_llm_dur,
+                            tokens=estimated_tokens if 'estimated_tokens' in dir() else 0,
+                        )
+                    except Exception:
+                        pass
 
                 if not result["ok"]:
                     # --- Self-Healing: try to recover from LLM failure ---
@@ -352,6 +376,16 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
 
                     logger.info("Agent '%s' calling tool: %s(%s)", agent.name, tool_name, tool_args)
 
+                    # --- Trace: log tool call ---
+                    if tracing_enabled:
+                        try:
+                            log_trace(
+                                trace_run_id, agent.name, "tool_call",
+                                f"Tool: {tool_name} | Args: {json.dumps(tool_args)[:300]}",
+                            )
+                        except Exception:
+                            pass
+
                     # --- Approval Gate: check before executing risky tools ---
                     if approval_enabled:
                         try:
@@ -429,6 +463,17 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
                     if pm_enabled:
                         update_process(process_pid, tool_calls=1)
 
+                    # --- Trace: log tool result ---
+                    if tracing_enabled:
+                        try:
+                            _result_str = json.dumps(tool_result)[:300]
+                            log_trace(
+                                trace_run_id, agent.name, "tool_result",
+                                f"Tool: {tool_name} | Result: {_result_str}",
+                            )
+                        except Exception:
+                            pass
+
                     # Append tool result to messages
                     messages.append({
                         "role": "tool",
@@ -466,6 +511,13 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
 
     except Exception as e:
         logger.error("Agent '%s' crashed: %s", agent.name, e, exc_info=True)
+        # --- Trace: log error ---
+        if tracing_enabled:
+            try:
+                log_trace(trace_run_id, agent.name, "error", f"Crash: {e}")
+                log_trace(trace_run_id, agent.name, "trace_end", "Trace ended with error")
+            except Exception:
+                pass
         if pm_enabled:
             update_process(process_pid, status="error", error=str(e))
 

@@ -36,6 +36,7 @@
             <div class="agent-actions">
                 <button class="btn btn-primary btn-sm" onclick="runAgentPrompt('{{ agent.name }}')">Run</button>
                 <button class="btn btn-danger btn-sm" onclick="stopAgent('{{ agent.name }}')">Stop</button>
+                <button class="btn btn-secondary btn-sm" onclick="shareAgent('{{ agent.name }}')">Share</button>
                 <button class="btn btn-secondary btn-sm" onclick="deleteAgent('{{ agent.name }}')">Delete</button>
             </div>
         </div>
@@ -492,6 +493,18 @@
             loadApprovals();
         } else {
             showResult('quick-result', 'Error: ' + (data.detail || 'Failed to deny'), true);
+        }
+    }
+
+    // --- Share Agent ---
+    async function shareAgent(agentName) {
+        const data = await apiCall(`/api/agents/${encodeURIComponent(agentName)}/share`, { method: 'POST' });
+        if (data.ok) {
+            const msg = `Agent shared!\n\nShare code: ${data.share_code}\nFile: ${data.file_path}`;
+            showResult('quick-result', msg, false);
+            alert(`Share code for "${agentName}": ${data.share_code}`);
+        } else {
+            showResult('quick-result', 'Error: ' + (data.detail || 'Failed to share agent'), true);
         }
     }
 

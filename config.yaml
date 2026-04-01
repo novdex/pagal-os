@@ -22,3 +22,14 @@ a2a:
   port: 18791
   auth_token: ${A2A_AUTH_TOKEN}
   remote_agents: {}  # agent_name -> url mappings
+
+# Voice agent interface
+voice:
+  stt_api_key: ${STT_API_KEY}
+  stt_api_base: "https://api.groq.com/openai/v1"
+  stt_model: "whisper-large-v3-turbo"
+  tts_voice: "en-US-AriaNeural"
+
+# Encryption at rest
+encryption:
+  enabled: true

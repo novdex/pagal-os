@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+{% block title %}Traces - PAGAL OS{% endblock %}
+{% block nav_traces %}active{% endblock %}
+
+{% block content %}
+<section class="page-header">
+    <h1>Agent Traces</h1>
+    <p>See exactly what agents are doing -- every LLM call, tool use, and decision</p>
+</section>
+
+<!-- Filters -->
+<section class="card" style="margin-bottom:1.5rem; padding:1rem;">
+    <form id="trace-filter" style="display:flex; gap:1rem; align-items:center; flex-wrap:wrap;">
+        <input type="text" id="filter-agent" placeholder="Filter by agent name..." style="flex:1; min-width:200px;">
+        <button type="submit" class="btn btn-primary">Filter</button>
+        <button type="button" class="btn btn-secondary" onclick="loadRecentTraces()">Show All</button>
+    </form>
+</section>
+
+<!-- Recent Traces List -->
+<section id="traces-list" class="card">
+    <h2 style="margin-bottom:1rem;">Recent Traces</h2>
+    <table id="traces-table" style="width:100%; border-collapse:collapse; display:none;">
+        <thead>
+            <tr>
+                <th style="text-align:left; padding:0.5rem; border-bottom:1px solid var(--border);">Run ID</th>
+                <th style="text-align:left; padding:0.5rem; border-bottom:1px solid var(--border);">Agent</th>
+                <th style="text-align:left; padding:0.5rem; border-bottom:1px solid var(--border);">Started</th>
+                <th style="text-align:left; padding:0.5rem; border-bottom:1px solid var(--border);">Events</th>
+                <th style="text-align:left; padding:0.5rem; border-bottom:1px solid var(--border);">Duration</th>
+                <th style="text-align:left; padding:0.5rem; border-bottom:1px solid var(--border);">Tokens</th>
+                <th style="text-align:center; padding:0.5rem; border-bottom:1px solid var(--border);">Actions</th>
+            </tr>
+        </thead>
+        <tbody id="traces-tbody"></tbody>
+    </table>
+    <div id="traces-empty" style="text-align:center; padding:2rem;">
+        <p class="text-muted">No traces recorded yet. Run an agent to see its trace here.</p>
+    </div>
+</section>
+
+<!-- Trace Detail (hidden until a trace is clicked) -->
+<section id="trace-detail" class="card" style="margin-top:1.5rem; display:none;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+        <h2 id="detail-title">Trace Detail</h2>
+        <button class="btn btn-secondary btn-sm" onclick="closeDetail()">Close</button>
+    </div>
+
+    <!-- Summary -->
+    <div id="trace-summary" style="display:flex; gap:2rem; flex-wrap:wrap; margin-bottom:1.5rem; padding:0.75rem; background:var(--bg-secondary, #1a1a2e); border-radius:8px;">
+        <div style="text-align:center;">
+            <div id="sum-events" style="font-size:1.5rem; font-weight:bold; color:var(--accent);">-</div>
+            <div class="text-muted" style="font-size:0.8rem;">Events</div>
+        </div>
+        <div style="text-align:center;">
+            <div id="sum-duration" style="font-size:1.5rem; font-weight:bold; color:var(--accent);">-</div>
+            <div class="text-muted" style="font-size:0.8rem;">Duration (ms)</div>
+        </div>
+        <div style="text-align:center;">
+            <div id="sum-tokens" style="font-size:1.5rem; font-weight:bold; color:var(--accent);">-</div>
+            <div class="text-muted" style="font-size:0.8rem;">Tokens</div>
+        </div>
+        <div style="text-align:center;">
+            <div id="sum-tools" style="font-size:1.5rem; font-weight:bold; color:var(--accent);">-</div>
+            <div class="text-muted" style="font-size:0.8rem;">Tool Calls</div>
+        </div>
+        <div style="text-align:center;">
+            <div id="sum-llm" style="font-size:1.5rem; font-weight:bold; color:var(--accent);">-</div>
+            <div class="text-muted" style="font-size:0.8rem;">LLM Calls</div>
+        </div>
+        <div style="text-align:center;">
+            <div id="sum-errors" style="font-size:1.5rem; font-weight:bold; color:var(--accent);">-</div>
+            <div class="text-muted" style="font-size:0.8rem;">Errors</div>
+        </div>
+    </div>
+
+    <!-- Timeline -->
+    <div id="trace-timeline" style="max-height:500px; overflow-y:auto;"></div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const eventColors = {
+        'trace_start': '#6c757d',
+        'trace_end': '#6c757d',
+        'llm_call': '#4dabf7',
+        'tool_call': '#51cf66',
+        'tool_result': '#69db7c',
+        'decision': '#ffd43b',
+        'error': '#ff6b6b',
+    };
+
+    function escapeHtml(s) {
+        const div = document.createElement('div');
+        div.textContent = s;
+        return div.innerHTML;
+    }
+
+    async function apiCall(url, opts) {
+        try {
+            const resp = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
+            return await resp.json();
+        } catch (e) {
+            console.error('API call failed:', e);
+            return { ok: false, error: String(e) };
+        }
+    }
+
+    async function loadRecentTraces(agentFilter) {
+        let url = '/api/traces?limit=30';
+        if (agentFilter) url += '&agent=' + encodeURIComponent(agentFilter);
+
+        const data = await apiCall(url);
+        const table = document.getElementById('traces-table');
+        const tbody = document.getElementById('traces-tbody');
+        const empty = document.getElementById('traces-empty');
+
+        if (data.ok && data.traces && data.traces.length > 0) {
+            table.style.display = 'table';
+            empty.style.display = 'none';
+            tbody.innerHTML = '';
+
+            for (const t of data.traces) {
+                const started = t.started_at ? new Date(t.started_at).toLocaleString() : '-';
+                const dur = t.total_duration_ms || 0;
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td style="padding:0.4rem; border-bottom:1px solid var(--border); font-family:monospace; font-size:0.85rem;">${escapeHtml(t.run_id)}</td>
+                    <td style="padding:0.4rem; border-bottom:1px solid var(--border);">${escapeHtml(t.agent_name)}</td>
+                    <td style="padding:0.4rem; border-bottom:1px solid var(--border);">${started}</td>
+                    <td style="padding:0.4rem; border-bottom:1px solid var(--border);">${t.event_count || 0}</td>
+                    <td style="padding:0.4rem; border-bottom:1px solid var(--border);">${dur}ms</td>
+                    <td style="padding:0.4rem; border-bottom:1px solid var(--border);">${t.total_tokens || 0}</td>
+                    <td style="padding:0.4rem; border-bottom:1px solid var(--border); text-align:center;">
+                        <button class="btn btn-primary btn-sm" onclick="viewTrace('${escapeHtml(t.run_id)}')">View</button>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            }
+        } else {
+            table.style.display = 'none';
+            empty.style.display = 'block';
+        }
+    }
+
+    async function viewTrace(runId) {
+        const detail = document.getElementById('trace-detail');
+        detail.style.display = 'block';
+        document.getElementById('detail-title').textContent = 'Trace: ' + runId;
+
+        // Load summary
+        const summary = await apiCall('/api/traces/' + encodeURIComponent(runId) + '/summary');
+        if (summary.ok) {
+            document.getElementById('sum-events').textContent = summary.event_count || 0;
+            document.getElementById('sum-duration').textContent = summary.total_time_ms || 0;
+            document.getElementById('sum-tokens').textContent = summary.total_tokens || 0;
+            document.getElementById('sum-tools').textContent = summary.tool_calls_count || 0;
+            document.getElementById('sum-llm').textContent = summary.llm_calls_count || 0;
+            document.getElementById('sum-errors').textContent = summary.errors_count || 0;
+        }
+
+        // Load events
+        const data = await apiCall('/api/traces/' + encodeURIComponent(runId));
+        const timeline = document.getElementById('trace-timeline');
+        timeline.innerHTML = '';
+
+        if (data.ok && data.events && data.events.length > 0) {
+            for (const evt of data.events) {
+                const color = eventColors[evt.event_type] || '#adb5bd';
+                const div = document.createElement('div');
+                div.style.cssText = `
+                    display: flex; gap: 0.75rem; padding: 0.6rem;
+                    border-left: 3px solid ${color}; margin-bottom: 0.5rem;
+                    background: var(--bg-secondary, #1a1a2e); border-radius: 0 6px 6px 0;
+                `;
+                div.innerHTML = `
+                    <div style="min-width:90px;">
+                        <span style="background:${color}; color:#fff; padding:0.15rem 0.4rem; border-radius:4px; font-size:0.75rem; font-weight:bold;">
+                            ${escapeHtml(evt.event_type)}
+                        </span>
+                    </div>
+                    <div style="flex:1; font-size:0.9rem; word-break:break-word;">
+                        ${escapeHtml(evt.content)}
+                    </div>
+                    <div style="min-width:80px; text-align:right; font-size:0.8rem; color:var(--text-secondary);">
+                        ${evt.duration_ms ? evt.duration_ms + 'ms' : ''}
+                        ${evt.tokens ? '<br>' + evt.tokens + ' tok' : ''}
+                    </div>
+                `;
+                timeline.appendChild(div);
+            }
+        } else {
+            timeline.innerHTML = '<p class="text-muted" style="text-align:center;">No events found.</p>';
+        }
+
+        // Scroll to detail
+        detail.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function closeDetail() {
+        document.getElementById('trace-detail').style.display = 'none';
+    }
+
+    // Filter form
+    document.getElementById('trace-filter').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const agent = document.getElementById('filter-agent').value.trim();
+        loadRecentTraces(agent || null);
+    });
+
+    // Initial load
+    loadRecentTraces();
+    setInterval(function() { loadRecentTraces(); }, 10000);
+</script>
+{% endblock %}
