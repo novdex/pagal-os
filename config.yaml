@@ -6,3 +6,8 @@ ollama_url: "http://localhost:11434"
 max_concurrent_agents: 5
 agent_timeout_seconds: 300
 storage_path: "~/.pagal-os"
+
+# Telegram bot configuration
+telegram:
+  bot_token: ${TELEGRAM_BOT_TOKEN}
+  default_agent: research_agent

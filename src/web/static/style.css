@@ -423,6 +423,40 @@ textarea {
     to { transform: rotate(360deg); }
 }
 
+/* Section headers */
+.section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+    margin-top: 1.5rem;
+}
+
+.section-header h2 {
+    font-size: 1.35rem;
+}
+
+/* Hands & Teams tables */
+.hands-section table th {
+    color: var(--text-secondary);
+    font-weight: 600;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.text-muted {
+    color: var(--text-muted);
+}
+
+code {
+    background: var(--bg-primary);
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    color: var(--info);
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .navbar {

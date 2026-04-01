@@ -143,6 +143,183 @@ def cmd_server(_args: argparse.Namespace) -> None:
     )
 
 
+# --- Hands Commands ---
+
+
+def cmd_hand_start(args: argparse.Namespace) -> None:
+    """Handle 'hand start' — start an autonomous scheduled agent.
+
+    Args:
+        args: Parsed CLI arguments with 'agent', 'schedule', and 'task' fields.
+    """
+    from src.core.hands import start_hand
+
+    result = start_hand(args.agent, args.schedule, args.task)
+    if result.get("ok"):
+        print(f"Hand started: {result['agent']}")
+        print(f"  Schedule: {result['schedule']} (every {result['interval_seconds']}s)")
+        print(f"  Task: {args.task}")
+    else:
+        print(f"Error: {result.get('error', 'unknown error')}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_hand_stop(args: argparse.Namespace) -> None:
+    """Handle 'hand stop' — stop a scheduled hand.
+
+    Args:
+        args: Parsed CLI arguments with 'agent' field.
+    """
+    from src.core.hands import stop_hand
+
+    if stop_hand(args.agent):
+        print(f"Hand '{args.agent}' stopped.")
+    else:
+        print(f"Hand '{args.agent}' is not running.")
+
+
+def cmd_hand_list(_args: argparse.Namespace) -> None:
+    """Handle 'hand list' — list all active hands.
+
+    Args:
+        _args: Parsed CLI arguments (unused).
+    """
+    from src.core.hands import list_hands
+
+    hands = list_hands()
+    if not hands:
+        print("No active hands. Start one with:")
+        print('  python pagal.py hand start <agent> --schedule "every 1h" --task "your task"')
+        return
+
+    print(f"{'Agent':<20} {'Status':<10} {'Schedule':<15} {'Last Run':<25} {'Task'}")
+    print("-" * 100)
+    for h in hands:
+        last_run = h.get("last_run", "never") or "never"
+        if isinstance(last_run, str) and len(last_run) > 22:
+            last_run = last_run[:22]
+        print(
+            f"{h['agent']:<20} {h['status']:<10} {h['schedule']:<15} "
+            f"{last_run:<25} {h['task'][:30]}"
+        )
+
+
+# --- Team Commands ---
+
+
+def cmd_team_create(args: argparse.Namespace) -> None:
+    """Handle 'team create' — create a multi-agent team.
+
+    Args:
+        args: Parsed CLI arguments with 'name', 'agents', and 'coordinator' fields.
+    """
+    from src.core.collaboration import create_team
+
+    agents_list = [a.strip() for a in args.agents.split(",") if a.strip()]
+    goal = args.goal if hasattr(args, "goal") and args.goal else f"Team {args.name}"
+
+    result = create_team(args.name, agents_list, args.coordinator, goal)
+    if result.get("ok"):
+        print(f"Team '{result['name']}' created!")
+        print(f"  Coordinator: {result['coordinator']}")
+        print(f"  Agents: {', '.join(result['agents'])}")
+        print(f"  Goal: {result['goal']}")
+    else:
+        print(f"Error: {result.get('error', 'unknown error')}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_team_run(args: argparse.Namespace) -> None:
+    """Handle 'team run' — execute a task with a team.
+
+    Args:
+        args: Parsed CLI arguments with 'name' and 'task' fields.
+    """
+    from src.core.collaboration import run_team
+
+    print(f"Running team '{args.name}' with task: {args.task}")
+    print("Coordinating agents... this may take a while.")
+    print("-" * 60)
+
+    result = run_team(args.name, args.task)
+
+    if result.get("ok"):
+        print("\n=== TEAM REPORT ===\n")
+        print(result["report"])
+        print("\n=== SUBTASKS ===\n")
+        for st in result.get("subtasks", []):
+            status = "OK" if st.get("ok") else "FAILED"
+            print(f"  [{status}] {st['agent']}: {st['subtask']}")
+            if st.get("error"):
+                print(f"         Error: {st['error']}")
+        print(f"\nAgents used: {', '.join(result.get('agents_used', []))}")
+    else:
+        print(f"Error: {result.get('error', 'unknown error')}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_team_list(_args: argparse.Namespace) -> None:
+    """Handle 'team list' — list all defined teams.
+
+    Args:
+        _args: Parsed CLI arguments (unused).
+    """
+    from src.core.collaboration import list_teams
+
+    teams = list_teams()
+    if not teams:
+        print("No teams found. Create one with:")
+        print('  python pagal.py team create "name" --agents "a1,a2" --coordinator "a1"')
+        return
+
+    print(f"{'Name':<20} {'Coordinator':<20} {'Agents':<30} {'Goal'}")
+    print("-" * 90)
+    for t in teams:
+        agents_str = ", ".join(t["agents"][:3])
+        if len(t["agents"]) > 3:
+            agents_str += f" (+{len(t['agents']) - 3})"
+        print(f"{t['name']:<20} {t['coordinator']:<20} {agents_str:<30} {t['goal'][:30]}")
+
+
+# --- Telegram Command ---
+
+
+def cmd_telegram(_args: argparse.Namespace) -> None:
+    """Handle 'telegram' — start the Telegram bot.
+
+    Args:
+        _args: Parsed CLI arguments (unused).
+    """
+    import os
+
+    from src.channels.telegram import start_telegram_bot
+
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    if not bot_token:
+        print("Error: TELEGRAM_BOT_TOKEN not set.", file=sys.stderr)
+        print("Set it in your .env file: TELEGRAM_BOT_TOKEN=your_token_here")
+        print("Get a token from @BotFather on Telegram.")
+        sys.exit(1)
+
+    default_agent = "research_agent"
+    # Try to load from config
+    try:
+        import yaml
+        from pathlib import Path
+
+        config_path = Path(__file__).parent.parent.parent / "config.yaml"
+        if config_path.exists():
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+            tg_cfg = cfg.get("telegram", {})
+            if isinstance(tg_cfg, dict):
+                default_agent = tg_cfg.get("default_agent", default_agent)
+    except Exception:
+        pass
+
+    start_telegram_bot(bot_token, default_agent)
+
+
 def main() -> None:
     """Entry point for the PAGAL OS CLI."""
     _setup_logging()
@@ -179,10 +356,77 @@ def main() -> None:
     # pagal server
     subparsers.add_parser("server", help="Start the API + web dashboard")
 
+    # --- Hand commands ---
+    hand_p = subparsers.add_parser("hand", help="Manage autonomous scheduled agents (Hands)")
+    hand_sub = hand_p.add_subparsers(dest="hand_command", help="Hand sub-commands")
+
+    # pagal hand start <agent> --schedule "every 1h" --task "find AI news"
+    hand_start_p = hand_sub.add_parser("start", help="Start a scheduled hand")
+    hand_start_p.add_argument("agent", help="Name of the agent to schedule")
+    hand_start_p.add_argument("--schedule", required=True, help='Schedule: "every 5m", "every 1h", "daily at 08:00"')
+    hand_start_p.add_argument("--task", required=True, help="Task for the hand to execute on each run")
+
+    # pagal hand stop <agent>
+    hand_stop_p = hand_sub.add_parser("stop", help="Stop a scheduled hand")
+    hand_stop_p.add_argument("agent", help="Name of the hand to stop")
+
+    # pagal hand list
+    hand_sub.add_parser("list", help="List all active hands")
+
+    # --- Team commands ---
+    team_p = subparsers.add_parser("team", help="Multi-agent team collaboration")
+    team_sub = team_p.add_subparsers(dest="team_command", help="Team sub-commands")
+
+    # pagal team create "name" --agents "a1,a2" --coordinator "a1"
+    team_create_p = team_sub.add_parser("create", help="Create a new team")
+    team_create_p.add_argument("name", help="Team name")
+    team_create_p.add_argument("--agents", required=True, help="Comma-separated agent names")
+    team_create_p.add_argument("--coordinator", required=True, help="Coordinator agent name")
+    team_create_p.add_argument("--goal", default="", help="Team goal description")
+
+    # pagal team run <name> "task"
+    team_run_p = team_sub.add_parser("run", help="Run a team task")
+    team_run_p.add_argument("name", help="Team name")
+    team_run_p.add_argument("task", help="Task for the team to execute")
+
+    # pagal team list
+    team_sub.add_parser("list", help="List all teams")
+
+    # --- Telegram command ---
+    subparsers.add_parser("telegram", help="Start the Telegram bot")
+
     args = parser.parse_args()
 
     if args.command is None:
         parser.print_help()
+        return
+
+    # Route hand sub-commands
+    if args.command == "hand":
+        hand_commands = {
+            "start": cmd_hand_start,
+            "stop": cmd_hand_stop,
+            "list": cmd_hand_list,
+        }
+        handler = hand_commands.get(args.hand_command)
+        if handler:
+            handler(args)
+        else:
+            hand_p.print_help()
+        return
+
+    # Route team sub-commands
+    if args.command == "team":
+        team_commands = {
+            "create": cmd_team_create,
+            "run": cmd_team_run,
+            "list": cmd_team_list,
+        }
+        handler = team_commands.get(args.team_command)
+        if handler:
+            handler(args)
+        else:
+            team_p.print_help()
         return
 
     commands = {
@@ -192,6 +436,7 @@ def main() -> None:
         "status": cmd_status,
         "stop": cmd_stop,
         "server": cmd_server,
+        "telegram": cmd_telegram,
     }
 
     handler = commands.get(args.command)

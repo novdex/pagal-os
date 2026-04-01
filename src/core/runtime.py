@@ -110,77 +110,136 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
         # Get tool schemas for this agent's tools
         tool_schemas = get_tool_schemas(agent.tools) if agent.tools else None
 
-        for loop_num in range(max_loops):
-            logger.info(
-                "Agent '%s' loop %d/%d",
-                agent.name, loop_num + 1, max_loops,
+            # Resource tracking: start monitoring limits for this run
+        try:
+            from src.core.resources import (
+                check_all_limits,
+                start_tracking,
+                stop_tracking,
+                track_usage,
             )
+            resource_limits = start_tracking(agent.name)
+            tracking_enabled = True
+        except Exception:
+            tracking_enabled = False
 
-            # Call LLM
-            result = call_llm(
-                messages=messages,
-                model=agent.model,
-                tools=tool_schemas,
-                timeout=60,
-            )
+        try:
+            for loop_num in range(max_loops):
+                # Check resource limits before each LLM call
+                if tracking_enabled:
+                    limit_exceeded = check_all_limits(resource_limits)
+                    if limit_exceeded:
+                        logger.warning(
+                            "Agent '%s' stopped: %s", agent.name, limit_exceeded,
+                        )
+                        return AgentResult(
+                            ok=False,
+                            output="",
+                            tools_used=tools_used,
+                            duration_seconds=time.time() - start_time,
+                            error=f"Resource limit exceeded: {limit_exceeded}",
+                        )
 
-            if not result["ok"]:
-                return AgentResult(
-                    ok=False,
-                    output="",
-                    tools_used=tools_used,
-                    duration_seconds=time.time() - start_time,
-                    error=result["error"],
+                logger.info(
+                    "Agent '%s' loop %d/%d",
+                    agent.name, loop_num + 1, max_loops,
                 )
 
-            # If no tool calls, we have the final response
-            if not result["tool_calls"]:
-                return AgentResult(
-                    ok=True,
-                    output=result["content"],
-                    tools_used=tools_used,
-                    duration_seconds=time.time() - start_time,
+                # Call LLM
+                result = call_llm(
+                    messages=messages,
+                    model=agent.model,
+                    tools=tool_schemas,
+                    timeout=60,
                 )
 
-            # Process tool calls
-            # Append the assistant's message with tool calls
-            messages.append({
-                "role": "assistant",
-                "content": result["content"] or "",
-                "tool_calls": result["tool_calls"],
-            })
+                if not result["ok"]:
+                    return AgentResult(
+                        ok=False,
+                        output="",
+                        tools_used=tools_used,
+                        duration_seconds=time.time() - start_time,
+                        error=result["error"],
+                    )
 
-            for tool_call in result["tool_calls"]:
-                func_info = tool_call.get("function", {})
-                tool_name = func_info.get("name", "")
-                tool_args_str = func_info.get("arguments", "{}")
+                # Track token usage (estimate based on content length)
+                if tracking_enabled:
+                    content_len = len(result.get("content", "") or "")
+                    estimated_tokens = max(content_len // 4, 50)
+                    track_usage(agent.name, tokens=estimated_tokens)
 
-                # Parse arguments
-                try:
-                    tool_args = json.loads(tool_args_str) if isinstance(tool_args_str, str) else tool_args_str
-                except json.JSONDecodeError:
-                    tool_args = {}
+                # If no tool calls, we have the final response
+                if not result["tool_calls"]:
+                    return AgentResult(
+                        ok=True,
+                        output=result["content"],
+                        tools_used=tools_used,
+                        duration_seconds=time.time() - start_time,
+                    )
 
-                logger.info("Agent '%s' calling tool: %s(%s)", agent.name, tool_name, tool_args)
-
-                # Execute the tool
-                tool_result = execute_tool(tool_name, tool_args)
-                tools_used.append(tool_name)
-
-                # Append tool result to messages
+                # Process tool calls
+                # Append the assistant's message with tool calls
                 messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.get("id", ""),
-                    "content": json.dumps(tool_result),
+                    "role": "assistant",
+                    "content": result["content"] or "",
+                    "tool_calls": result["tool_calls"],
                 })
 
-        # If we hit max loops, return what we have
-        return AgentResult(
-            ok=True,
-            output=result.get("content", "Agent reached maximum loop count."),
-            tools_used=tools_used,
-            duration_seconds=time.time() - start_time,
-        )
+                for tool_call in result["tool_calls"]:
+                    # Check tool call limit before executing
+                    if tracking_enabled:
+                        limit_exceeded = check_all_limits(resource_limits)
+                        if limit_exceeded:
+                            logger.warning(
+                                "Agent '%s' stopped mid-tools: %s",
+                                agent.name, limit_exceeded,
+                            )
+                            return AgentResult(
+                                ok=False,
+                                output="",
+                                tools_used=tools_used,
+                                duration_seconds=time.time() - start_time,
+                                error=f"Resource limit exceeded: {limit_exceeded}",
+                            )
+
+                    func_info = tool_call.get("function", {})
+                    tool_name = func_info.get("name", "")
+                    tool_args_str = func_info.get("arguments", "{}")
+
+                    # Parse arguments
+                    try:
+                        tool_args = json.loads(tool_args_str) if isinstance(tool_args_str, str) else tool_args_str
+                    except json.JSONDecodeError:
+                        tool_args = {}
+
+                    logger.info("Agent '%s' calling tool: %s(%s)", agent.name, tool_name, tool_args)
+
+                    # Execute the tool
+                    tool_result = execute_tool(tool_name, tool_args)
+                    tools_used.append(tool_name)
+
+                    # Track tool call usage
+                    if tracking_enabled:
+                        track_usage(agent.name, tool_calls=1)
+
+                    # Append tool result to messages
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.get("id", ""),
+                        "content": json.dumps(tool_result),
+                    })
+
+            # If we hit max loops, return what we have
+            return AgentResult(
+                ok=True,
+                output=result.get("content", "Agent reached maximum loop count."),
+                tools_used=tools_used,
+                duration_seconds=time.time() - start_time,
+            )
+        finally:
+            # Always stop resource tracking when the run ends
+            if tracking_enabled:
+                stop_tracking(agent.name)
 
     except Exception as e:
         logger.error("Agent '%s' crashed: %s", agent.name, e, exc_info=True)

@@ -48,11 +48,190 @@
         </div>
     {% endif %}
 </section>
+<!-- Active Hands -->
+<section class="hands-section">
+    <div class="section-header">
+        <h2>Hands (Scheduled Agents)</h2>
+    </div>
+    <div id="hands-container" class="card">
+        <p class="text-muted" id="hands-loading">Loading hands...</p>
+        <table id="hands-table" style="display:none; width:100%; border-collapse:collapse;">
+            <thead>
+                <tr>
+                    <th style="text-align:left; padding:0.5rem; border-bottom:1px solid var(--border);">Agent</th>
+                    <th style="text-align:left; padding:0.5rem; border-bottom:1px solid var(--border);">Schedule</th>
+                    <th style="text-align:left; padding:0.5rem; border-bottom:1px solid var(--border);">Task</th>
+                    <th style="text-align:left; padding:0.5rem; border-bottom:1px solid var(--border);">Status</th>
+                    <th style="text-align:left; padding:0.5rem; border-bottom:1px solid var(--border);">Last Run</th>
+                    <th style="text-align:center; padding:0.5rem; border-bottom:1px solid var(--border);">Actions</th>
+                </tr>
+            </thead>
+            <tbody id="hands-tbody"></tbody>
+        </table>
+        <div id="hands-empty" style="display:none; text-align:center; padding:1rem;">
+            <p class="text-muted">No active hands. Start one from the CLI:</p>
+            <code>python pagal.py hand start &lt;agent&gt; --schedule "every 1h" --task "your task"</code>
+        </div>
+    </div>
+</section>
+
+<!-- Teams -->
+<section class="teams-section" style="margin-top:2rem;">
+    <div class="section-header">
+        <h2>Teams</h2>
+    </div>
+    <div id="teams-container" class="card">
+        <p class="text-muted" id="teams-loading">Loading teams...</p>
+        <div id="teams-grid" class="agents-grid" style="display:none;"></div>
+        <div id="teams-empty" style="display:none; text-align:center; padding:1rem;">
+            <p class="text-muted">No teams defined. Create one from the CLI:</p>
+            <code>python pagal.py team create "name" --agents "a1,a2" --coordinator "a1"</code>
+        </div>
+    </div>
+    <div id="team-result" class="result-box" style="display:none;"></div>
+</section>
 {% endblock %}
 
 {% block scripts %}
 <script>
     // Auto-refresh agent statuses every 5 seconds
     setInterval(refreshAgentStatuses, 5000);
+
+    // --- Hands Dashboard ---
+    async function loadHands() {
+        const data = await apiCall('/api/hands');
+        const loading = document.getElementById('hands-loading');
+        const table = document.getElementById('hands-table');
+        const tbody = document.getElementById('hands-tbody');
+        const empty = document.getElementById('hands-empty');
+
+        if (loading) loading.style.display = 'none';
+
+        if (data.ok && data.hands && data.hands.length > 0) {
+            table.style.display = 'table';
+            empty.style.display = 'none';
+            tbody.innerHTML = '';
+            for (const h of data.hands) {
+                const lastRun = h.last_run ? new Date(h.last_run).toLocaleString() : 'never';
+                const statusClass = h.status === 'running' ? 'status-running' : 'status-idle';
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td style="padding:0.5rem; border-bottom:1px solid var(--border);">${escapeHtml(h.agent)}</td>
+                    <td style="padding:0.5rem; border-bottom:1px solid var(--border);">${escapeHtml(h.schedule)}</td>
+                    <td style="padding:0.5rem; border-bottom:1px solid var(--border);">${escapeHtml(h.task.substring(0, 50))}</td>
+                    <td style="padding:0.5rem; border-bottom:1px solid var(--border);">
+                        <span class="status-dot ${statusClass}"></span> ${h.status}
+                    </td>
+                    <td style="padding:0.5rem; border-bottom:1px solid var(--border);">${lastRun}</td>
+                    <td style="padding:0.5rem; border-bottom:1px solid var(--border); text-align:center;">
+                        <button class="btn btn-danger btn-sm" onclick="stopHand('${escapeHtml(h.agent)}')">Stop</button>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            }
+        } else {
+            table.style.display = 'none';
+            empty.style.display = 'block';
+        }
+    }
+
+    async function stopHand(agentName) {
+        if (!confirm(`Stop hand "${agentName}"?`)) return;
+        const data = await apiCall(`/api/hands/${encodeURIComponent(agentName)}`, { method: 'DELETE' });
+        if (data.ok) {
+            showResult('quick-result', `Hand "${agentName}" stopped.`, false);
+            loadHands();
+        } else {
+            showResult('quick-result', 'Error: ' + (data.detail || 'Failed to stop hand'), true);
+        }
+    }
+
+    // --- Teams Dashboard ---
+    async function loadTeams() {
+        const data = await apiCall('/api/teams');
+        const loading = document.getElementById('teams-loading');
+        const grid = document.getElementById('teams-grid');
+        const empty = document.getElementById('teams-empty');
+
+        if (loading) loading.style.display = 'none';
+
+        if (data.ok && data.teams && data.teams.length > 0) {
+            grid.style.display = 'grid';
+            empty.style.display = 'none';
+            grid.innerHTML = '';
+            for (const t of data.teams) {
+                const card = document.createElement('div');
+                card.className = 'agent-card card';
+                card.innerHTML = `
+                    <div class="agent-header">
+                        <h3>${escapeHtml(t.name)}</h3>
+                    </div>
+                    <p class="agent-desc">${escapeHtml(t.goal || 'No goal set')}</p>
+                    <div class="agent-meta">
+                        <span class="badge">Coordinator: ${escapeHtml(t.coordinator)}</span>
+                        <span class="badge">${t.agents.length} agents</span>
+                    </div>
+                    <div style="margin-bottom:0.75rem; color:var(--text-secondary); font-size:0.85rem;">
+                        Agents: ${t.agents.map(a => escapeHtml(a)).join(', ')}
+                    </div>
+                    <div class="agent-actions">
+                        <button class="btn btn-primary btn-sm" onclick="runTeamPrompt('${escapeHtml(t.name)}')">Run Task</button>
+                        <button class="btn btn-danger btn-sm" onclick="deleteTeam('${escapeHtml(t.name)}')">Delete</button>
+                    </div>
+                `;
+                grid.appendChild(card);
+            }
+        } else {
+            grid.style.display = 'none';
+            empty.style.display = 'block';
+        }
+    }
+
+    async function runTeamPrompt(teamName) {
+        const task = prompt(`Enter task for team "${teamName}":`);
+        if (!task) return;
+
+        showResult('team-result', `Running team "${teamName}"... this may take a while.`);
+
+        const data = await apiCall(`/api/teams/${encodeURIComponent(teamName)}/run`, {
+            method: 'POST',
+            body: JSON.stringify({ task: task }),
+        });
+
+        if (data.ok) {
+            let msg = '=== TEAM REPORT ===\n\n' + (data.report || 'No report generated.');
+            if (data.subtasks && data.subtasks.length > 0) {
+                msg += '\n\n=== SUBTASKS ===\n';
+                for (const st of data.subtasks) {
+                    const status = st.ok ? 'OK' : 'FAILED';
+                    msg += `\n[${status}] ${st.agent}: ${st.subtask}`;
+                }
+            }
+            if (data.agents_used) {
+                msg += '\n\nAgents used: ' + data.agents_used.join(', ');
+            }
+            showResult('team-result', msg, false);
+        } else {
+            showResult('team-result', 'Error: ' + (data.error || data.detail || 'Unknown error'), true);
+        }
+    }
+
+    async function deleteTeam(teamName) {
+        if (!confirm(`Delete team "${teamName}"?`)) return;
+        const data = await apiCall(`/api/teams/${encodeURIComponent(teamName)}`, { method: 'DELETE' });
+        if (data.ok) {
+            showResult('team-result', `Team "${teamName}" deleted.`, false);
+            loadTeams();
+        } else {
+            showResult('team-result', 'Error: ' + (data.detail || 'Failed to delete team'), true);
+        }
+    }
+
+    // Load hands and teams on page load
+    loadHands();
+    loadTeams();
+
+    // Refresh hands every 10 seconds
+    setInterval(loadHands, 10000);
 </script>
 {% endblock %}

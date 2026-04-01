@@ -4,12 +4,15 @@
 Run: python pagal.py <command>
 
 Commands:
-    create  - Create a new agent from a description
-    run     - Run an agent with a task
-    list    - List all available agents
-    status  - Show agent status
-    stop    - Stop a running agent
-    server  - Start the API + web dashboard
+    create    - Create a new agent from a description
+    run       - Run an agent with a task
+    list      - List all available agents
+    status    - Show agent status
+    stop      - Stop a running agent
+    server    - Start the API + web dashboard
+    hand      - Manage autonomous scheduled agents (start/stop/list)
+    team      - Multi-agent team collaboration (create/run/list)
+    telegram  - Start the Telegram bot
 """
 
 import sys

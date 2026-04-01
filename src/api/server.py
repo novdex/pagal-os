@@ -30,6 +30,16 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     import src.tools  # noqa: F401
 
     config = get_config()
+
+    # Restore scheduled hands from disk
+    try:
+        from src.core.hands import restore_hands
+        restored = restore_hands()
+        if restored:
+            logger.info("Restored %d hands on startup.", restored)
+    except Exception as e:
+        logger.warning("Failed to restore hands on startup: %s", e)
+
     logger.info("PAGAL OS server started on port %d", config.web_port)
     yield
 

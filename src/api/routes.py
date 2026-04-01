@@ -56,6 +56,29 @@ class SettingsUpdate(BaseModel):
     ollama_url: str | None = None
 
 
+class StartHandRequest(BaseModel):
+    """Request body for starting a scheduled hand."""
+
+    agent: str
+    schedule: str
+    task: str
+
+
+class CreateTeamRequest(BaseModel):
+    """Request body for creating a team."""
+
+    name: str
+    agents: list[str]
+    coordinator: str
+    goal: str = ""
+
+
+class RunTeamRequest(BaseModel):
+    """Request body for running a team task."""
+
+    task: str
+
+
 # --- API Endpoints ---
 
 
@@ -219,6 +242,179 @@ async def api_update_settings(req: SettingsUpdate) -> dict[str, Any]:
         config.ollama_url = req.ollama_url
 
     return {"ok": True, "message": "Settings updated"}
+
+
+# --- Hands API Endpoints ---
+
+
+@router.post("/api/hands", tags=["hands"])
+async def api_start_hand(req: StartHandRequest) -> dict[str, Any]:
+    """Start a scheduled autonomous hand.
+
+    Args:
+        req: Request with agent name, schedule, and task.
+
+    Returns:
+        Dict with status info.
+    """
+    try:
+        from src.core.hands import start_hand
+        result = start_hand(req.agent, req.schedule, req.task)
+        if not result.get("ok"):
+            raise HTTPException(status_code=400, detail=result.get("error", "Unknown error"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to start hand: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/hands", tags=["hands"])
+async def api_list_hands() -> dict[str, Any]:
+    """List all active hands.
+
+    Returns:
+        Dict with list of hand info dicts.
+    """
+    try:
+        from src.core.hands import list_hands
+        hands = list_hands()
+        return {"ok": True, "hands": hands}
+    except Exception as e:
+        logger.error("Failed to list hands: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.delete("/api/hands/{name}", tags=["hands"])
+async def api_stop_hand(name: str) -> dict[str, Any]:
+    """Stop a scheduled hand.
+
+    Args:
+        name: Agent/hand name.
+
+    Returns:
+        Dict with success status.
+    """
+    try:
+        from src.core.hands import stop_hand
+        if stop_hand(name):
+            return {"ok": True, "message": f"Hand '{name}' stopped"}
+        raise HTTPException(status_code=404, detail=f"Hand '{name}' not found or not running")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to stop hand '%s': %s", name, e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Teams API Endpoints ---
+
+
+@router.post("/api/teams", tags=["teams"])
+async def api_create_team(req: CreateTeamRequest) -> dict[str, Any]:
+    """Create a multi-agent team.
+
+    Args:
+        req: Request with team name, agents, coordinator, and goal.
+
+    Returns:
+        Dict with team info.
+    """
+    try:
+        from src.core.collaboration import create_team
+        result = create_team(req.name, req.agents, req.coordinator, req.goal)
+        if not result.get("ok"):
+            raise HTTPException(status_code=400, detail=result.get("error", "Unknown error"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to create team: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/teams", tags=["teams"])
+async def api_list_teams() -> dict[str, Any]:
+    """List all defined teams.
+
+    Returns:
+        Dict with list of team info dicts.
+    """
+    try:
+        from src.core.collaboration import list_teams
+        teams = list_teams()
+        return {"ok": True, "teams": teams}
+    except Exception as e:
+        logger.error("Failed to list teams: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/teams/{name}/run", tags=["teams"])
+async def api_run_team(name: str, req: RunTeamRequest) -> dict[str, Any]:
+    """Run a team task.
+
+    Args:
+        name: Team name.
+        req: Request with task.
+
+    Returns:
+        Dict with team execution results.
+    """
+    try:
+        from src.core.collaboration import run_team
+        result = run_team(name, req.task)
+        if not result.get("ok"):
+            raise HTTPException(status_code=400, detail=result.get("error", "Unknown error"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to run team '%s': %s", name, e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.delete("/api/teams/{name}", tags=["teams"])
+async def api_delete_team(name: str) -> dict[str, Any]:
+    """Delete a team.
+
+    Args:
+        name: Team name.
+
+    Returns:
+        Dict with success status.
+    """
+    try:
+        from src.core.collaboration import delete_team
+        if delete_team(name):
+            return {"ok": True, "message": f"Team '{name}' deleted"}
+        raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to delete team '%s': %s", name, e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Usage API Endpoint ---
+
+
+@router.get("/api/usage", tags=["usage"])
+async def api_usage_report(agent: str | None = None) -> dict[str, Any]:
+    """Get resource usage report for agents.
+
+    Args:
+        agent: Optional agent name to filter by.
+
+    Returns:
+        Dict with usage statistics.
+    """
+    try:
+        from src.core.resources import get_usage_report
+        return get_usage_report(agent)
+    except Exception as e:
+        logger.error("Failed to get usage report: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 # --- Web Page Routes ---
