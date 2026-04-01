@@ -19,7 +19,10 @@ def search_web(query: str, num_results: int = 5) -> dict[str, Any]:
         Dict with 'ok' and 'result' (list of {title, url, snippet}) keys.
     """
     try:
-        from duckduckgo_search import DDGS
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            from duckduckgo_search import DDGS
 
         results = []
         with DDGS() as ddgs:
