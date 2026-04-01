@@ -387,6 +387,96 @@ def cmd_team_list(_args: argparse.Namespace) -> None:
         print(f"{t['name']:<20} {t['coordinator']:<20} {agents_str:<30} {t['goal'][:30]}")
 
 
+# --- Process Manager Commands ---
+
+
+def cmd_ps(_args: argparse.Namespace) -> None:
+    """Handle the 'ps' command — list all agent processes.
+
+    Args:
+        _args: Parsed CLI arguments (unused).
+    """
+    from src.core.process_manager import get_system_stats, list_processes
+
+    processes = list_processes()
+    stats = get_system_stats()
+
+    if not processes:
+        print("No agent processes. Run an agent first.")
+        return
+
+    print(f"{'PID':<10} {'Agent':<20} {'Status':<12} {'Uptime':<10} {'Tokens':<10} {'Tools':<8} {'Pri':<5}")
+    print("-" * 80)
+    for p in processes:
+        uptime_str = f"{p['uptime_seconds']:.0f}s"
+        print(
+            f"{p['pid']:<10} {p['agent_name']:<20} {p['status']:<12} "
+            f"{uptime_str:<10} {p['tokens_used']:<10} {p['tool_calls']:<8} {p['priority']:<5}"
+        )
+
+    print(f"\nSystem: {stats['running']} running, {stats['total_tokens']} total tokens, "
+          f"uptime {stats['uptime_seconds']:.0f}s")
+
+
+def cmd_kill(args: argparse.Namespace) -> None:
+    """Handle the 'kill' command — kill an agent process.
+
+    Args:
+        args: Parsed CLI arguments with 'pid' field.
+    """
+    from src.core.process_manager import kill_process
+
+    if kill_process(args.pid):
+        print(f"Process {args.pid} killed.")
+    else:
+        print(f"Process {args.pid} not found.", file=sys.stderr)
+        sys.exit(1)
+
+
+# --- Memory Commands ---
+
+
+def cmd_memory_search(args: argparse.Namespace) -> None:
+    """Handle 'memory search' — search an agent's cross-session memory.
+
+    Args:
+        args: Parsed CLI arguments with 'agent' and 'query' fields.
+    """
+    from src.core.memory import search_memory
+
+    results = search_memory(args.agent, args.query)
+    if not results:
+        print(f"No memory found for agent '{args.agent}' matching '{args.query}'")
+        return
+
+    for r in results:
+        source_tag = f"[{r.get('source', '?')}]"
+        role = r.get("role", "")
+        created = r.get("created_at", "")
+        content = r.get("content", "")[:120]
+        print(f"{source_tag} {role} ({created}): {content}")
+
+
+def cmd_memory_stats(args: argparse.Namespace) -> None:
+    """Handle 'memory stats' — show memory statistics.
+
+    Args:
+        args: Parsed CLI arguments with optional 'agent' field.
+    """
+    from src.core.memory import get_memory_stats
+
+    agent_name = args.agent if hasattr(args, "agent") and args.agent else None
+    stats = get_memory_stats(agent_name)
+
+    print("Memory Stats:")
+    print(f"  Messages:  {stats.get('total_messages', 0)}")
+    print(f"  Summaries: {stats.get('total_summaries', 0)}")
+    if "agents" in stats:
+        print("\n  Per-Agent Messages:")
+        for a in stats["agents"]:
+            print(f"    {a['agent']}: {a['messages']}")
+
+
 # --- Telegram Command ---
 
 
@@ -528,6 +618,25 @@ def main() -> None:
     # --- Telegram command ---
     subparsers.add_parser("telegram", help="Start the Telegram bot")
 
+    # --- Process Manager commands ---
+    subparsers.add_parser("ps", help="List all agent processes")
+
+    kill_p = subparsers.add_parser("kill", help="Kill an agent process")
+    kill_p.add_argument("pid", help="Process ID to kill")
+
+    # --- Memory commands ---
+    memory_p = subparsers.add_parser("memory", help="Cross-session memory management")
+    memory_sub = memory_p.add_subparsers(dest="memory_command", help="Memory sub-commands")
+
+    # pagal memory search <agent> <query>
+    memory_search_p = memory_sub.add_parser("search", help="Search an agent's memory")
+    memory_search_p.add_argument("agent", help="Agent name")
+    memory_search_p.add_argument("query", help="Search keywords")
+
+    # pagal memory stats [--agent <name>]
+    memory_stats_p = memory_sub.add_parser("stats", help="Show memory statistics")
+    memory_stats_p.add_argument("--agent", default=None, help="Filter by agent name")
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -589,6 +698,19 @@ def main() -> None:
             team_p.print_help()
         return
 
+    # Route memory sub-commands
+    if args.command == "memory":
+        memory_commands = {
+            "search": cmd_memory_search,
+            "stats": cmd_memory_stats,
+        }
+        handler = memory_commands.get(args.memory_command)
+        if handler:
+            handler(args)
+        else:
+            memory_p.print_help()
+        return
+
     commands = {
         "create": cmd_create,
         "run": cmd_run,
@@ -597,6 +719,8 @@ def main() -> None:
         "stop": cmd_stop,
         "server": cmd_server,
         "telegram": cmd_telegram,
+        "ps": cmd_ps,
+        "kill": cmd_kill,
     }
 
     handler = commands.get(args.command)

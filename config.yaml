@@ -11,3 +11,14 @@ storage_path: "~/.pagal-os"
 telegram:
   bot_token: ${TELEGRAM_BOT_TOKEN}
   default_agent: research_agent
+
+# MCP (Model Context Protocol) configuration
+mcp:
+  server_port: 18790
+  clients: []  # external MCP servers to connect to on startup
+
+# Agent-to-Agent (A2A) protocol configuration
+a2a:
+  port: 18791
+  auth_token: ${A2A_AUTH_TOKEN}
+  remote_agents: {}  # agent_name -> url mappings

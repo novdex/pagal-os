@@ -13,6 +13,9 @@ Commands:
     hand      - Manage autonomous scheduled agents (start/stop/list)
     team      - Multi-agent team collaboration (create/run/list)
     telegram  - Start the Telegram bot
+    ps        - List all agent processes (process manager)
+    kill      - Kill an agent process by PID
+    memory    - Cross-session memory management (search/stats)
 """
 
 import sys

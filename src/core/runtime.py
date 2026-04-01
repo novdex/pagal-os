@@ -100,6 +100,29 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
     tools_used: list[str] = []
     max_loops = 20
 
+    # --- Process Manager: register this run ---
+    process_pid = ""
+    try:
+        from src.core.process_manager import register_process, update_process
+        process_pid = register_process(agent.name, task, threading.current_thread())
+        pm_enabled = True
+    except Exception:
+        pm_enabled = False
+
+    # --- Cross-Session Memory: generate session ID and inject context ---
+    session_id = ""
+    try:
+        from src.core.memory import (
+            generate_session_id,
+            get_memory_context,
+            save_message,
+            summarize_old_messages,
+        )
+        session_id = generate_session_id()
+        memory_enabled = True
+    except Exception:
+        memory_enabled = False
+
     try:
         # --- Security: scan prompt injection on user task ---
         try:
@@ -141,11 +164,27 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
         except Exception:
             security_enabled = False
 
-        # Build initial messages
+        # Build initial messages — inject memory context into system prompt
+        system_content = agent.personality
+        if memory_enabled:
+            try:
+                memory_ctx = get_memory_context(agent.name)
+                if memory_ctx:
+                    system_content = f"{agent.personality}\n\n{memory_ctx}"
+            except Exception as mem_err:
+                logger.debug("Failed to inject memory context: %s", mem_err)
+
         messages: list[dict[str, str]] = [
-            {"role": "system", "content": agent.personality},
+            {"role": "system", "content": system_content},
             {"role": "user", "content": task},
         ]
+
+        # Save user message to memory
+        if memory_enabled:
+            try:
+                save_message(agent.name, session_id, "user", task)
+            except Exception:
+                pass
 
         # Get tool schemas for this agent's tools
         tool_schemas = get_tool_schemas(agent.tools) if agent.tools else None
@@ -185,7 +224,7 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
                     agent.name, loop_num + 1, max_loops,
                 )
 
-                # Call LLM
+                # Call LLM (with self-healing on failure)
                 result = call_llm(
                     messages=messages,
                     model=agent.model,
@@ -194,6 +233,21 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
                 )
 
                 if not result["ok"]:
+                    # --- Self-Healing: try to recover from LLM failure ---
+                    try:
+                        from src.core.healing import heal_llm_failure
+                        result = heal_llm_failure(
+                            model=agent.model,
+                            messages=messages,
+                            error=result["error"],
+                            tools=tool_schemas,
+                        )
+                    except Exception:
+                        pass  # healing itself failed, keep original error
+
+                if not result["ok"]:
+                    if pm_enabled:
+                        update_process(process_pid, status="error", error=result["error"])
                     return AgentResult(
                         ok=False,
                         output="",
@@ -203,10 +257,12 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
                     )
 
                 # Track token usage (estimate based on content length)
+                content_len = len(result.get("content", "") or "")
+                estimated_tokens = max(content_len // 4, 50)
                 if tracking_enabled:
-                    content_len = len(result.get("content", "") or "")
-                    estimated_tokens = max(content_len // 4, 50)
                     track_usage(agent.name, tokens=estimated_tokens)
+                if pm_enabled:
+                    update_process(process_pid, tokens=estimated_tokens)
 
                 # If no tool calls, we have the final response
                 if not result["tool_calls"]:
@@ -215,6 +271,17 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
 
                     if security_enabled:
                         audit_log("agent_completed", agent.name, f"duration={time.time() - start_time:.1f}s")
+
+                    # --- Memory: save assistant response ---
+                    if memory_enabled:
+                        try:
+                            save_message(agent.name, session_id, "assistant", result["content"])
+                        except Exception:
+                            pass
+
+                    # --- Process Manager: mark completed ---
+                    if pm_enabled:
+                        update_process(process_pid, status="completed")
 
                     return AgentResult(
                         ok=True,
@@ -289,13 +356,28 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
                             })
                             continue
 
-                    # Execute the tool
+                    # Execute the tool (with self-healing on failure)
                     tool_result = execute_tool(tool_name, tool_args)
+
+                    # --- Self-Healing: try to recover from tool failure ---
+                    if isinstance(tool_result, dict) and not tool_result.get("ok", True):
+                        try:
+                            from src.core.healing import heal_tool_failure
+                            healed = heal_tool_failure(
+                                tool_name, tool_args, tool_result.get("error", ""),
+                            )
+                            if healed.get("ok"):
+                                tool_result = healed
+                        except Exception:
+                            pass  # healing itself failed, keep original result
+
                     tools_used.append(tool_name)
 
                     # Track tool call usage
                     if tracking_enabled:
                         track_usage(agent.name, tool_calls=1)
+                    if pm_enabled:
+                        update_process(process_pid, tool_calls=1)
 
                     # Append tool result to messages
                     messages.append({
@@ -305,6 +387,8 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
                     })
 
             # If we hit max loops, return what we have
+            if pm_enabled:
+                update_process(process_pid, status="completed")
             return AgentResult(
                 ok=True,
                 output=result.get("content", "Agent reached maximum loop count."),
@@ -316,8 +400,17 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
             if tracking_enabled:
                 stop_tracking(agent.name)
 
+            # --- Memory: summarize old messages if there are too many ---
+            if memory_enabled:
+                try:
+                    summarize_old_messages(agent.name, keep_recent=20)
+                except Exception:
+                    pass
+
     except Exception as e:
         logger.error("Agent '%s' crashed: %s", agent.name, e, exc_info=True)
+        if pm_enabled:
+            update_process(process_pid, status="error", error=str(e))
         return AgentResult(
             ok=False,
             output="",

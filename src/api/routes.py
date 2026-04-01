@@ -522,6 +522,308 @@ async def api_audit_log(limit: int = 100) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+# --- Processes API Endpoints ---
+
+
+@router.get("/api/processes", tags=["processes"])
+async def api_list_processes() -> dict[str, Any]:
+    """List all agent processes (like ps aux).
+
+    Returns:
+        Dict with list of process info dicts and system stats.
+    """
+    try:
+        from src.core.process_manager import get_system_stats, list_processes
+        processes = list_processes()
+        stats = get_system_stats()
+        return {"ok": True, "processes": processes, "system": stats}
+    except Exception as e:
+        logger.error("Process list error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/processes/{pid}", tags=["processes"])
+async def api_get_process(pid: str) -> dict[str, Any]:
+    """Get details for a single process.
+
+    Args:
+        pid: Process ID.
+
+    Returns:
+        Dict with process info.
+    """
+    try:
+        from src.core.process_manager import get_process_stats
+        result = get_process_stats(pid)
+        if not result.get("ok"):
+            raise HTTPException(status_code=404, detail=f"Process {pid} not found")
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Process stats error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.delete("/api/processes/{pid}", tags=["processes"])
+async def api_kill_process(pid: str) -> dict[str, Any]:
+    """Kill an agent process.
+
+    Args:
+        pid: Process ID.
+
+    Returns:
+        Dict with success status.
+    """
+    try:
+        from src.core.process_manager import kill_process
+        if kill_process(pid):
+            return {"ok": True, "message": f"Process {pid} killed"}
+        raise HTTPException(status_code=404, detail=f"Process {pid} not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Process kill error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Memory API Endpoints ---
+
+
+@router.get("/api/memory", tags=["memory"])
+async def api_memory_stats(agent: str | None = None) -> dict[str, Any]:
+    """Get cross-session memory statistics.
+
+    Args:
+        agent: Optional agent name to filter by.
+
+    Returns:
+        Dict with memory stats.
+    """
+    try:
+        from src.core.memory import get_memory_stats
+        return {"ok": True, **get_memory_stats(agent)}
+    except Exception as e:
+        logger.error("Memory stats error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/memory/search", tags=["memory"])
+async def api_memory_search(agent: str, query: str, limit: int = 10) -> dict[str, Any]:
+    """Search an agent's cross-session memory.
+
+    Args:
+        agent: Agent name.
+        query: Search keywords.
+        limit: Max results.
+
+    Returns:
+        Dict with search results.
+    """
+    try:
+        from src.core.memory import search_memory
+        results = search_memory(agent, query, limit)
+        return {"ok": True, "results": results}
+    except Exception as e:
+        logger.error("Memory search error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- MCP API Endpoints ---
+
+
+@router.get("/api/mcp/connections", tags=["mcp"])
+async def api_mcp_connections() -> dict[str, Any]:
+    """List all MCP server connections.
+
+    Returns:
+        Dict with list of MCP connection info.
+    """
+    try:
+        from src.core.mcp import list_mcp_connections
+        return {"ok": True, "connections": list_mcp_connections()}
+    except Exception as e:
+        logger.error("MCP connections error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+class MCPConnectRequest(BaseModel):
+    """Request body for connecting to an MCP server."""
+
+    name: str
+    command: str
+    args: list[str] = []
+    env: dict[str, str] = {}
+
+
+@router.post("/api/mcp/connect", tags=["mcp"])
+async def api_mcp_connect(req: MCPConnectRequest) -> dict[str, Any]:
+    """Connect to an external MCP server.
+
+    Args:
+        req: Connection details.
+
+    Returns:
+        Dict with success status.
+    """
+    try:
+        from src.core.mcp import connect_mcp_server
+        ok = connect_mcp_server(req.name, req.command, req.args, req.env)
+        if ok:
+            return {"ok": True, "message": f"Connected to MCP server '{req.name}'"}
+        raise HTTPException(status_code=500, detail=f"Failed to connect to '{req.name}'")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("MCP connect error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.delete("/api/mcp/connections/{name}", tags=["mcp"])
+async def api_mcp_disconnect(name: str) -> dict[str, Any]:
+    """Disconnect an MCP server.
+
+    Args:
+        name: MCP server name.
+
+    Returns:
+        Dict with success status.
+    """
+    try:
+        from src.core.mcp import disconnect_mcp_server
+        disconnect_mcp_server(name)
+        return {"ok": True, "message": f"Disconnected MCP server '{name}'"}
+    except Exception as e:
+        logger.error("MCP disconnect error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- A2A API Endpoints ---
+
+
+class A2ARegisterRequest(BaseModel):
+    """Request body for registering a remote agent."""
+
+    agent_name: str
+    url: str
+
+
+class A2ACallRequest(BaseModel):
+    """Request body for calling a remote agent."""
+
+    agent_name: str
+    task: str
+
+
+@router.get("/api/a2a/agents", tags=["a2a"])
+async def api_a2a_list() -> dict[str, Any]:
+    """List all registered remote agents.
+
+    Returns:
+        Dict with list of remote agent endpoints.
+    """
+    try:
+        from src.core.a2a import list_remote_agents
+        return {"ok": True, "agents": list_remote_agents()}
+    except Exception as e:
+        logger.error("A2A list error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/a2a/register", tags=["a2a"])
+async def api_a2a_register(req: A2ARegisterRequest) -> dict[str, Any]:
+    """Register a remote agent endpoint.
+
+    Args:
+        req: Registration details.
+
+    Returns:
+        Dict with success status.
+    """
+    try:
+        from src.core.a2a import register_agent_endpoint
+        ok = register_agent_endpoint(req.agent_name, req.url)
+        return {"ok": ok, "message": f"Registered '{req.agent_name}' at {req.url}"}
+    except Exception as e:
+        logger.error("A2A register error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/a2a/call", tags=["a2a"])
+async def api_a2a_call(req: A2ACallRequest) -> dict[str, Any]:
+    """Call a remote agent.
+
+    Args:
+        req: Call details with agent name and task.
+
+    Returns:
+        Dict with remote agent's response.
+    """
+    try:
+        from src.core.a2a import call_remote_agent
+        result = call_remote_agent(req.agent_name, req.task)
+        return result
+    except Exception as e:
+        logger.error("A2A call error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Worlds API Endpoints ---
+
+
+@router.get("/api/worlds", tags=["worlds"])
+async def api_list_worlds() -> dict[str, Any]:
+    """List all worlds.
+
+    Returns:
+        Dict with list of world info.
+    """
+    try:
+        from src.core.worlds import list_worlds
+        return {"ok": True, "worlds": list_worlds()}
+    except Exception as e:
+        logger.error("Worlds list error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/worlds/{world_id}/rooms", tags=["worlds"])
+async def api_list_rooms(world_id: str) -> dict[str, Any]:
+    """List all rooms in a world.
+
+    Args:
+        world_id: World identifier.
+
+    Returns:
+        Dict with list of room info.
+    """
+    try:
+        from src.core.worlds import list_rooms
+        return {"ok": True, "rooms": list_rooms(world_id)}
+    except Exception as e:
+        logger.error("Rooms list error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/worlds/{world_id}/rooms/{room_id}", tags=["worlds"])
+async def api_get_room_context(world_id: str, room_id: str) -> dict[str, Any]:
+    """Get messages from a specific room.
+
+    Args:
+        world_id: World identifier.
+        room_id: Room identifier.
+
+    Returns:
+        Dict with room messages.
+    """
+    try:
+        from src.core.worlds import get_room_context
+        messages = get_room_context(world_id, room_id)
+        return {"ok": True, "messages": messages}
+    except Exception as e:
+        logger.error("Room context error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 @router.get("/api/usage", tags=["usage"])
 async def api_usage_report(agent: str | None = None) -> dict[str, Any]:
     """Get resource usage report for agents.

@@ -48,6 +48,67 @@
         </div>
     {% endif %}
 </section>
+<!-- Process Manager -->
+<section class="processes-section" style="margin-top:1.5rem;">
+    <div class="section-header">
+        <h2>Processes</h2>
+    </div>
+    <div id="process-container" class="card">
+        <div id="process-system-stats" style="display:flex; gap:2rem; flex-wrap:wrap; padding:0.75rem 0; margin-bottom:0.5rem; border-bottom:1px solid var(--border);">
+            <div style="text-align:center;">
+                <div id="ps-running" style="font-size:1.5rem; font-weight:bold; color:var(--accent);">-</div>
+                <div class="text-muted" style="font-size:0.8rem;">Running</div>
+            </div>
+            <div style="text-align:center;">
+                <div id="ps-tokens" style="font-size:1.5rem; font-weight:bold; color:var(--accent);">-</div>
+                <div class="text-muted" style="font-size:0.8rem;">Total Tokens</div>
+            </div>
+            <div style="text-align:center;">
+                <div id="ps-uptime" style="font-size:1.5rem; font-weight:bold; color:var(--accent);">-</div>
+                <div class="text-muted" style="font-size:0.8rem;">Uptime (s)</div>
+            </div>
+        </div>
+        <table id="process-table" style="display:none; width:100%; border-collapse:collapse;">
+            <thead>
+                <tr>
+                    <th style="text-align:left; padding:0.5rem; border-bottom:1px solid var(--border);">PID</th>
+                    <th style="text-align:left; padding:0.5rem; border-bottom:1px solid var(--border);">Agent</th>
+                    <th style="text-align:left; padding:0.5rem; border-bottom:1px solid var(--border);">Status</th>
+                    <th style="text-align:left; padding:0.5rem; border-bottom:1px solid var(--border);">Uptime</th>
+                    <th style="text-align:left; padding:0.5rem; border-bottom:1px solid var(--border);">Tokens</th>
+                    <th style="text-align:left; padding:0.5rem; border-bottom:1px solid var(--border);">Tools</th>
+                    <th style="text-align:center; padding:0.5rem; border-bottom:1px solid var(--border);">Actions</th>
+                </tr>
+            </thead>
+            <tbody id="process-tbody"></tbody>
+        </table>
+        <div id="process-empty" style="text-align:center; padding:1rem;">
+            <p class="text-muted">No active processes.</p>
+        </div>
+    </div>
+</section>
+
+<!-- Memory Stats -->
+<section class="memory-section" style="margin-top:1.5rem;">
+    <div class="section-header">
+        <h2>Cross-Session Memory</h2>
+    </div>
+    <div id="memory-stats" class="card" style="display:flex; gap:2rem; flex-wrap:wrap; padding:1.25rem;">
+        <div style="text-align:center;">
+            <div id="mem-messages" style="font-size:2rem; font-weight:bold; color:var(--accent);">-</div>
+            <div class="text-muted">Messages</div>
+        </div>
+        <div style="text-align:center;">
+            <div id="mem-summaries" style="font-size:2rem; font-weight:bold; color:var(--accent);">-</div>
+            <div class="text-muted">Summaries</div>
+        </div>
+        <div id="mem-agents-list" style="flex:1; min-width:200px;">
+            <div class="text-muted" style="margin-bottom:0.5rem;">Per-Agent Memory</div>
+            <div id="mem-agents" style="font-size:0.85rem;">Loading...</div>
+        </div>
+    </div>
+</section>
+
 <!-- Knowledge Graph Stats -->
 <section class="knowledge-section" style="margin-top:1.5rem;">
     <div class="section-header">
@@ -274,12 +335,97 @@
         }
     }
 
-    // Load hands, teams, and knowledge on page load
+    // --- Processes Dashboard ---
+    async function loadProcesses() {
+        try {
+            const data = await apiCall('/api/processes');
+            const table = document.getElementById('process-table');
+            const tbody = document.getElementById('process-tbody');
+            const empty = document.getElementById('process-empty');
+
+            // Update system stats
+            if (data.system) {
+                document.getElementById('ps-running').textContent = data.system.running || 0;
+                document.getElementById('ps-tokens').textContent = data.system.total_tokens || 0;
+                document.getElementById('ps-uptime').textContent = Math.round(data.system.uptime_seconds || 0);
+            }
+
+            if (data.ok && data.processes && data.processes.length > 0) {
+                table.style.display = 'table';
+                empty.style.display = 'none';
+                tbody.innerHTML = '';
+                for (const p of data.processes) {
+                    const statusClass = p.status === 'running' ? 'status-running' :
+                                       p.status === 'error' ? 'status-error' : 'status-idle';
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td style="padding:0.4rem; border-bottom:1px solid var(--border); font-family:monospace; font-size:0.85rem;">${escapeHtml(p.pid)}</td>
+                        <td style="padding:0.4rem; border-bottom:1px solid var(--border);">${escapeHtml(p.agent_name)}</td>
+                        <td style="padding:0.4rem; border-bottom:1px solid var(--border);">
+                            <span class="status-dot ${statusClass}"></span> ${p.status}
+                        </td>
+                        <td style="padding:0.4rem; border-bottom:1px solid var(--border);">${Math.round(p.uptime_seconds)}s</td>
+                        <td style="padding:0.4rem; border-bottom:1px solid var(--border);">${p.tokens_used}</td>
+                        <td style="padding:0.4rem; border-bottom:1px solid var(--border);">${p.tool_calls}</td>
+                        <td style="padding:0.4rem; border-bottom:1px solid var(--border); text-align:center;">
+                            ${p.status === 'running' ?
+                                `<button class="btn btn-danger btn-sm" onclick="killProcess('${escapeHtml(p.pid)}')">Kill</button>` :
+                                '<span class="text-muted">-</span>'}
+                        </td>
+                    `;
+                    tbody.appendChild(row);
+                }
+            } else {
+                table.style.display = 'none';
+                empty.style.display = 'block';
+            }
+        } catch (e) {
+            console.error('Failed to load processes:', e);
+        }
+    }
+
+    async function killProcess(pid) {
+        if (!confirm(`Kill process "${pid}"?`)) return;
+        const data = await apiCall(`/api/processes/${encodeURIComponent(pid)}`, { method: 'DELETE' });
+        if (data.ok) {
+            showResult('quick-result', `Process "${pid}" killed.`, false);
+            loadProcesses();
+        } else {
+            showResult('quick-result', 'Error: ' + (data.detail || 'Failed to kill process'), true);
+        }
+    }
+
+    // --- Memory Stats Dashboard ---
+    async function loadMemoryStats() {
+        try {
+            const data = await apiCall('/api/memory');
+            if (data.ok !== false) {
+                document.getElementById('mem-messages').textContent = data.total_messages || 0;
+                document.getElementById('mem-summaries').textContent = data.total_summaries || 0;
+                const agentsList = document.getElementById('mem-agents');
+                if (data.agents && data.agents.length > 0) {
+                    agentsList.innerHTML = data.agents.map(a =>
+                        `<span class="badge" style="margin:0.15rem;">${escapeHtml(a.agent)} (${a.messages})</span>`
+                    ).join(' ');
+                } else {
+                    agentsList.textContent = 'No memory stored yet.';
+                }
+            }
+        } catch (e) {
+            console.error('Failed to load memory stats:', e);
+        }
+    }
+
+    // Load hands, teams, knowledge, processes, and memory on page load
     loadHands();
     loadTeams();
     loadKnowledgeStats();
+    loadProcesses();
+    loadMemoryStats();
 
-    // Refresh hands every 10 seconds
+    // Refresh hands every 10 seconds, processes every 5
     setInterval(loadHands, 10000);
+    setInterval(loadProcesses, 5000);
+    setInterval(loadMemoryStats, 30000);
 </script>
 {% endblock %}
