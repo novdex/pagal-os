@@ -101,6 +101,46 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
     max_loops = 20
 
     try:
+        # --- Security: scan prompt injection on user task ---
+        try:
+            from src.core.security import (
+                audit_log,
+                check_file_access,
+                rate_limit,
+                sanitize_tool_input,
+                scan_prompt_injection,
+            )
+            security_enabled = True
+
+            injection = scan_prompt_injection(task)
+            if not injection["safe"]:
+                audit_log("prompt_injection_blocked", agent.name, str(injection["threats"]))
+                logger.warning("Prompt injection blocked for agent '%s'", agent.name)
+                return AgentResult(
+                    ok=False,
+                    output="",
+                    tools_used=tools_used,
+                    duration_seconds=time.time() - start_time,
+                    error=f"Prompt injection detected: {injection['threats']}",
+                )
+
+            # Rate limit check
+            if not rate_limit(agent.name):
+                audit_log("rate_limit_exceeded", agent.name, "")
+                return AgentResult(
+                    ok=False,
+                    output="",
+                    tools_used=tools_used,
+                    duration_seconds=time.time() - start_time,
+                    error="Rate limit exceeded",
+                )
+
+            audit_log("agent_started", agent.name, f"task={task[:100]}")
+        except ImportError:
+            security_enabled = False
+        except Exception:
+            security_enabled = False
+
         # Build initial messages
         messages: list[dict[str, str]] = [
             {"role": "system", "content": agent.personality},
@@ -170,6 +210,12 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
 
                 # If no tool calls, we have the final response
                 if not result["tool_calls"]:
+                    # --- Knowledge: save key findings ---
+                    _save_run_knowledge(agent.name, task, result["content"])
+
+                    if security_enabled:
+                        audit_log("agent_completed", agent.name, f"duration={time.time() - start_time:.1f}s")
+
                     return AgentResult(
                         ok=True,
                         output=result["content"],
@@ -213,6 +259,35 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
                         tool_args = {}
 
                     logger.info("Agent '%s' calling tool: %s(%s)", agent.name, tool_name, tool_args)
+
+                    # --- Security: sanitise tool inputs ---
+                    if security_enabled:
+                        try:
+                            tool_args = sanitize_tool_input(tool_name, tool_args)
+
+                            # File access check for file-related tools
+                            if tool_name in ("read_file", "write_file"):
+                                file_path = tool_args.get("path", tool_args.get("file_path", ""))
+                                if file_path and not check_file_access(file_path):
+                                    audit_log("file_access_blocked", agent.name, f"path={file_path}")
+                                    tool_result = {"ok": False, "error": "File access denied"}
+                                    messages.append({
+                                        "role": "tool",
+                                        "tool_call_id": tool_call.get("id", ""),
+                                        "content": json.dumps(tool_result),
+                                    })
+                                    continue
+
+                            audit_log("tool_call", agent.name, f"tool={tool_name}")
+                        except ValueError as ve:
+                            audit_log("tool_input_blocked", agent.name, str(ve))
+                            tool_result = {"ok": False, "error": str(ve)}
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call.get("id", ""),
+                                "content": json.dumps(tool_result),
+                            })
+                            continue
 
                     # Execute the tool
                     tool_result = execute_tool(tool_name, tool_args)
@@ -385,3 +460,35 @@ def delete_agent(name: str) -> bool:
         logger.info("Deleted agent '%s'", name)
         return True
     return False
+
+
+def _save_run_knowledge(agent_name: str, task: str, output: str) -> None:
+    """Save key findings from an agent run to the knowledge graph.
+
+    Extracts a topic from the task and stores the output summary.
+
+    Args:
+        agent_name: The agent that produced the result.
+        task: The original task description.
+        output: The agent's final output text.
+    """
+    try:
+        from src.core.knowledge import add_knowledge, auto_link
+
+        if not output or len(output.strip()) < 20:
+            return
+
+        # Derive topic from first few words of the task
+        topic_words = task.strip().split()[:5]
+        topic = " ".join(topic_words) if topic_words else "general"
+
+        # Truncate output for storage (keep first 500 chars)
+        content = output.strip()[:500]
+
+        add_knowledge(agent_name, topic, content, source=f"run:{task[:80]}")
+
+        # Try to auto-link with existing knowledge
+        auto_link(agent_name)
+    except Exception as e:
+        # Knowledge saving is best-effort — never block agent execution
+        logger.debug("Failed to save run knowledge: %s", e)

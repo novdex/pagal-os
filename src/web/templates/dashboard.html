@@ -48,6 +48,31 @@
         </div>
     {% endif %}
 </section>
+<!-- Knowledge Graph Stats -->
+<section class="knowledge-section" style="margin-top:1.5rem;">
+    <div class="section-header">
+        <h2>Knowledge Graph</h2>
+    </div>
+    <div id="knowledge-stats" class="card" style="display:flex; gap:2rem; flex-wrap:wrap; padding:1.25rem;">
+        <div style="text-align:center;">
+            <div id="kg-nodes" style="font-size:2rem; font-weight:bold; color:var(--accent);">-</div>
+            <div class="text-muted">Facts</div>
+        </div>
+        <div style="text-align:center;">
+            <div id="kg-edges" style="font-size:2rem; font-weight:bold; color:var(--accent);">-</div>
+            <div class="text-muted">Connections</div>
+        </div>
+        <div style="text-align:center;">
+            <div id="kg-topics" style="font-size:2rem; font-weight:bold; color:var(--accent);">-</div>
+            <div class="text-muted">Topics</div>
+        </div>
+        <div id="kg-top-topics" style="flex:1; min-width:200px;">
+            <div class="text-muted" style="margin-bottom:0.5rem;">Top Topics</div>
+            <div id="kg-topics-list" style="font-size:0.85rem;">Loading...</div>
+        </div>
+    </div>
+</section>
+
 <!-- Active Hands -->
 <section class="hands-section">
     <div class="section-header">
@@ -227,9 +252,32 @@
         }
     }
 
-    // Load hands and teams on page load
+    // --- Knowledge Graph Stats ---
+    async function loadKnowledgeStats() {
+        try {
+            const data = await apiCall('/api/knowledge/stats');
+            if (data.ok !== false) {
+                document.getElementById('kg-nodes').textContent = data.total_nodes || 0;
+                document.getElementById('kg-edges').textContent = data.total_edges || 0;
+                document.getElementById('kg-topics').textContent = data.unique_topics || 0;
+                const topicsList = document.getElementById('kg-topics-list');
+                if (data.top_topics && data.top_topics.length > 0) {
+                    topicsList.innerHTML = data.top_topics.map(t =>
+                        `<span class="badge" style="margin:0.15rem;">${escapeHtml(t.topic)} (${t.count})</span>`
+                    ).join(' ');
+                } else {
+                    topicsList.textContent = 'No knowledge yet.';
+                }
+            }
+        } catch (e) {
+            console.error('Failed to load knowledge stats:', e);
+        }
+    }
+
+    // Load hands, teams, and knowledge on page load
     loadHands();
     loadTeams();
+    loadKnowledgeStats();
 
     // Refresh hands every 10 seconds
     setInterval(loadHands, 10000);

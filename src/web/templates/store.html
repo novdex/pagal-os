@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}Agent Store - PAGAL OS{% endblock %}
+{% block nav_store %}active{% endblock %}
+
+{% block content %}
+<section class="page-header">
+    <h1>Agent Store</h1>
+    <p>Discover, install, and share agent configurations</p>
+</section>
+
+<!-- Search Bar -->
+<section class="card" style="margin-bottom:1.5rem;">
+    <form id="store-search-form" style="display:flex; gap:0.75rem;">
+        <input type="text" id="store-query" placeholder="Search agents..." style="flex:1; padding:0.5rem 0.75rem; border:1px solid var(--border); border-radius:6px; background:var(--bg-secondary); color:var(--text-primary);">
+        <button type="submit" class="btn btn-primary">Search</button>
+        <button type="button" class="btn btn-secondary" onclick="loadAllAgents()">Show All</button>
+    </form>
+</section>
+
+<!-- Status message -->
+<div id="store-status" class="result-box" style="display:none;"></div>
+
+<!-- Featured Section -->
+<section id="featured-section" style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:1rem;">Featured Agents</h2>
+    <div id="featured-grid" class="agents-grid"></div>
+</section>
+
+<!-- All Agents Section -->
+<section id="all-section">
+    <h2 style="margin-bottom:1rem;">All Agents</h2>
+    <div id="store-grid" class="agents-grid"></div>
+    <div id="store-empty" style="display:none; text-align:center; padding:2rem;" class="card">
+        <p class="text-muted">No agents found. Try a different search term.</p>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function renderAgentCard(agent, container) {
+        const card = document.createElement('div');
+        card.className = 'agent-card card';
+        const toolsBadges = (agent.tools || []).map(t =>
+            `<span class="badge" style="font-size:0.75rem;">${escapeHtml(t)}</span>`
+        ).join(' ');
+
+        card.innerHTML = `
+            <div class="agent-header">
+                <h3>${escapeHtml(agent.name)}</h3>
+            </div>
+            <p class="agent-desc">${escapeHtml(agent.description)}</p>
+            <div class="agent-meta" style="margin-bottom:0.5rem;">
+                <span class="badge badge-status">by ${escapeHtml(agent.author || 'pagal-os')}</span>
+                <span class="badge">${agent.downloads || 0} installs</span>
+            </div>
+            <div style="margin-bottom:0.75rem; display:flex; flex-wrap:wrap; gap:0.25rem;">
+                ${toolsBadges}
+            </div>
+            <div class="agent-actions">
+                <button class="btn btn-primary btn-sm" onclick="installAgent('${escapeHtml(agent.id)}')">Install</button>
+            </div>
+        `;
+        container.appendChild(card);
+    }
+
+    async function loadFeatured() {
+        try {
+            const data = await apiCall('/api/marketplace?featured=true');
+            const grid = document.getElementById('featured-grid');
+            grid.innerHTML = '';
+            if (data.ok && data.agents && data.agents.length > 0) {
+                for (const agent of data.agents) {
+                    renderAgentCard(agent, grid);
+                }
+            } else {
+                document.getElementById('featured-section').style.display = 'none';
+            }
+        } catch (e) {
+            console.error('Failed to load featured:', e);
+        }
+    }
+
+    async function loadAllAgents() {
+        try {
+            const data = await apiCall('/api/marketplace');
+            const grid = document.getElementById('store-grid');
+            const empty = document.getElementById('store-empty');
+            grid.innerHTML = '';
+            if (data.ok && data.agents && data.agents.length > 0) {
+                empty.style.display = 'none';
+                for (const agent of data.agents) {
+                    renderAgentCard(agent, grid);
+                }
+            } else {
+                empty.style.display = 'block';
+            }
+        } catch (e) {
+            console.error('Failed to load agents:', e);
+        }
+    }
+
+    async function searchAgents(query) {
+        try {
+            const data = await apiCall(`/api/marketplace?q=${encodeURIComponent(query)}`);
+            const grid = document.getElementById('store-grid');
+            const empty = document.getElementById('store-empty');
+            grid.innerHTML = '';
+            if (data.ok && data.agents && data.agents.length > 0) {
+                empty.style.display = 'none';
+                for (const agent of data.agents) {
+                    renderAgentCard(agent, grid);
+                }
+            } else {
+                empty.style.display = 'block';
+            }
+        } catch (e) {
+            console.error('Search failed:', e);
+        }
+    }
+
+    async function installAgent(agentId) {
+        const status = document.getElementById('store-status');
+        status.style.display = 'block';
+        status.textContent = `Installing "${agentId}"...`;
+        status.className = 'result-box';
+
+        try {
+            const data = await apiCall(`/api/marketplace/install/${encodeURIComponent(agentId)}`, {
+                method: 'POST',
+            });
+            if (data.ok) {
+                status.textContent = `Agent "${agentId}" installed successfully! Go to My Agents to run it.`;
+                status.className = 'result-box result-success';
+                loadAllAgents();
+            } else {
+                status.textContent = 'Error: ' + (data.detail || data.error || 'Install failed');
+                status.className = 'result-box result-error';
+            }
+        } catch (e) {
+            status.textContent = 'Error: ' + e.message;
+            status.className = 'result-box result-error';
+        }
+    }
+
+    document.getElementById('store-search-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const query = document.getElementById('store-query').value.trim();
+        if (query) {
+            searchAgents(query);
+        } else {
+            loadAllAgents();
+        }
+    });
+
+    // Load on page init
+    loadFeatured();
+    loadAllAgents();
+</script>
+{% endblock %}

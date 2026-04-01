@@ -143,6 +143,112 @@ def cmd_server(_args: argparse.Namespace) -> None:
     )
 
 
+# --- Store Commands ---
+
+
+def cmd_store_search(args: argparse.Namespace) -> None:
+    """Handle 'store search' — search the agent marketplace.
+
+    Args:
+        args: Parsed CLI arguments with 'query' field.
+    """
+    from src.core.marketplace import search_marketplace
+
+    results = search_marketplace(args.query)
+    if not results:
+        print(f"No agents found for '{args.query}'")
+        return
+
+    print(f"{'ID':<20} {'Name':<25} {'Description'}")
+    print("-" * 80)
+    for agent in results:
+        print(f"{agent['id']:<20} {agent['name']:<25} {agent['description'][:35]}")
+
+
+def cmd_store_install(args: argparse.Namespace) -> None:
+    """Handle 'store install' — install an agent from the marketplace.
+
+    Args:
+        args: Parsed CLI arguments with 'agent_id' field.
+    """
+    from src.core.marketplace import install_agent
+
+    print(f"Installing agent '{args.agent_id}'...")
+    if install_agent(args.agent_id):
+        print(f"Agent '{args.agent_id}' installed successfully!")
+        print(f"Run it with: python pagal.py run {args.agent_id} \"your task here\"")
+    else:
+        print(f"Failed to install agent '{args.agent_id}'.", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_store_list(_args: argparse.Namespace) -> None:
+    """Handle 'store list' — list all marketplace agents.
+
+    Args:
+        _args: Parsed CLI arguments (unused).
+    """
+    from src.core.marketplace import list_marketplace
+
+    agents = list_marketplace()
+    if not agents:
+        print("Marketplace is empty.")
+        return
+
+    print(f"{'ID':<20} {'Name':<25} {'Downloads':<10} {'Description'}")
+    print("-" * 90)
+    for agent in agents:
+        print(
+            f"{agent['id']:<20} {agent['name']:<25} "
+            f"{agent.get('downloads', 0):<10} {agent['description'][:35]}"
+        )
+
+
+# --- Knowledge Commands ---
+
+
+def cmd_knowledge_search(args: argparse.Namespace) -> None:
+    """Handle 'knowledge search' — search the knowledge graph.
+
+    Args:
+        args: Parsed CLI arguments with 'query' and optional 'agent' fields.
+    """
+    from src.core.knowledge import search_knowledge
+
+    agent_name = args.agent if hasattr(args, "agent") and args.agent else None
+    results = search_knowledge(args.query, agent_name=agent_name)
+
+    if not results:
+        print(f"No knowledge found for '{args.query}'")
+        return
+
+    for node in results:
+        print(f"[{node['id']}] {node['topic']} (by {node['agent_name']})")
+        print(f"    {node['content'][:80]}")
+        if node.get("source"):
+            print(f"    Source: {node['source']}")
+        print()
+
+
+def cmd_knowledge_stats(_args: argparse.Namespace) -> None:
+    """Handle 'knowledge stats' — show knowledge graph statistics.
+
+    Args:
+        _args: Parsed CLI arguments (unused).
+    """
+    from src.core.knowledge import get_stats
+
+    stats = get_stats()
+    print(f"Knowledge Graph Stats:")
+    print(f"  Facts:       {stats['total_nodes']}")
+    print(f"  Connections: {stats['total_edges']}")
+    print(f"  Topics:      {stats['unique_topics']}")
+    if stats["top_topics"]:
+        print("\n  Top Topics:")
+        for t in stats["top_topics"]:
+            print(f"    - {t['topic']} ({t['count']} entries)")
+
+
 # --- Hands Commands ---
 
 
@@ -356,6 +462,33 @@ def main() -> None:
     # pagal server
     subparsers.add_parser("server", help="Start the API + web dashboard")
 
+    # --- Store commands ---
+    store_p = subparsers.add_parser("store", help="Browse and install agents from the marketplace")
+    store_sub = store_p.add_subparsers(dest="store_command", help="Store sub-commands")
+
+    # pagal store search <query>
+    store_search_p = store_sub.add_parser("search", help="Search the marketplace")
+    store_search_p.add_argument("query", help="Search query")
+
+    # pagal store install <id>
+    store_install_p = store_sub.add_parser("install", help="Install an agent from the marketplace")
+    store_install_p.add_argument("agent_id", help="Agent ID to install")
+
+    # pagal store list
+    store_sub.add_parser("list", help="List all marketplace agents")
+
+    # --- Knowledge commands ---
+    knowledge_p = subparsers.add_parser("knowledge", help="Query the knowledge graph")
+    knowledge_sub = knowledge_p.add_subparsers(dest="knowledge_command", help="Knowledge sub-commands")
+
+    # pagal knowledge search <query> [--agent <name>]
+    knowledge_search_p = knowledge_sub.add_parser("search", help="Search the knowledge graph")
+    knowledge_search_p.add_argument("query", help="Search query")
+    knowledge_search_p.add_argument("--agent", default=None, help="Filter by agent name")
+
+    # pagal knowledge stats
+    knowledge_sub.add_parser("stats", help="Show knowledge graph statistics")
+
     # --- Hand commands ---
     hand_p = subparsers.add_parser("hand", help="Manage autonomous scheduled agents (Hands)")
     hand_sub = hand_p.add_subparsers(dest="hand_command", help="Hand sub-commands")
@@ -399,6 +532,33 @@ def main() -> None:
 
     if args.command is None:
         parser.print_help()
+        return
+
+    # Route store sub-commands
+    if args.command == "store":
+        store_commands = {
+            "search": cmd_store_search,
+            "install": cmd_store_install,
+            "list": cmd_store_list,
+        }
+        handler = store_commands.get(args.store_command)
+        if handler:
+            handler(args)
+        else:
+            store_p.print_help()
+        return
+
+    # Route knowledge sub-commands
+    if args.command == "knowledge":
+        knowledge_commands = {
+            "search": cmd_knowledge_search,
+            "stats": cmd_knowledge_stats,
+        }
+        handler = knowledge_commands.get(args.knowledge_command)
+        if handler:
+            handler(args)
+        else:
+            knowledge_p.print_help()
         return
 
     # Route hand sub-commands

@@ -399,6 +399,129 @@ async def api_delete_team(name: str) -> dict[str, Any]:
 # --- Usage API Endpoint ---
 
 
+# --- Marketplace API Endpoints ---
+
+
+@router.get("/api/marketplace", tags=["marketplace"])
+async def api_marketplace(
+    q: str | None = None,
+    featured: str | None = None,
+) -> dict[str, Any]:
+    """List or search marketplace agents.
+
+    Args:
+        q: Optional search query.
+        featured: If "true", return only featured agents.
+
+    Returns:
+        Dict with list of agent entries.
+    """
+    try:
+        from src.core.marketplace import get_featured, list_marketplace, search_marketplace
+
+        if featured and featured.lower() == "true":
+            agents = get_featured()
+        elif q:
+            agents = search_marketplace(q)
+        else:
+            agents = list_marketplace()
+        return {"ok": True, "agents": agents}
+    except Exception as e:
+        logger.error("Marketplace API error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/marketplace/install/{agent_id}", tags=["marketplace"])
+async def api_marketplace_install(agent_id: str) -> dict[str, Any]:
+    """Install an agent from the marketplace.
+
+    Args:
+        agent_id: Marketplace agent ID.
+
+    Returns:
+        Dict with success status.
+    """
+    try:
+        from src.core.marketplace import install_agent
+
+        if install_agent(agent_id):
+            return {"ok": True, "message": f"Agent '{agent_id}' installed"}
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found or install failed")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Marketplace install error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Knowledge API Endpoints ---
+
+
+@router.get("/api/knowledge", tags=["knowledge"])
+async def api_knowledge_search(
+    query: str = "",
+    agent: str | None = None,
+    limit: int = 10,
+) -> dict[str, Any]:
+    """Search the knowledge graph.
+
+    Args:
+        query: Search string.
+        agent: Optional agent name filter.
+        limit: Max results.
+
+    Returns:
+        Dict with matching knowledge nodes.
+    """
+    try:
+        from src.core.knowledge import search_knowledge
+
+        results = search_knowledge(query, agent_name=agent, limit=limit)
+        return {"ok": True, "results": results}
+    except Exception as e:
+        logger.error("Knowledge search error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/knowledge/stats", tags=["knowledge"])
+async def api_knowledge_stats() -> dict[str, Any]:
+    """Get knowledge graph statistics.
+
+    Returns:
+        Dict with node/edge/topic counts.
+    """
+    try:
+        from src.core.knowledge import get_stats
+
+        return get_stats()
+    except Exception as e:
+        logger.error("Knowledge stats error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Audit API Endpoint ---
+
+
+@router.get("/api/audit", tags=["security"])
+async def api_audit_log(limit: int = 100) -> dict[str, Any]:
+    """Get recent audit log entries.
+
+    Args:
+        limit: Max number of entries (newest first).
+
+    Returns:
+        Dict with log entries.
+    """
+    try:
+        from src.core.security import get_audit_entries
+
+        entries = get_audit_entries(limit=limit)
+        return {"ok": True, "entries": entries}
+    except Exception as e:
+        logger.error("Audit log API error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 @router.get("/api/usage", tags=["usage"])
 async def api_usage_report(agent: str | None = None) -> dict[str, Any]:
     """Get resource usage report for agents.
@@ -432,6 +555,19 @@ async def page_dashboard(request: Request) -> HTMLResponse:
     """
     agents = list_agents()
     return templates.TemplateResponse(request, "dashboard.html", {"agents": agents})
+
+
+@router.get("/store", response_class=HTMLResponse, tags=["web"])
+async def page_store(request: Request) -> HTMLResponse:
+    """Serve the agent store/marketplace page.
+
+    Args:
+        request: FastAPI request object.
+
+    Returns:
+        Rendered HTML store page.
+    """
+    return templates.TemplateResponse(request, "store.html")
 
 
 @router.get("/create", response_class=HTMLResponse, tags=["web"])
