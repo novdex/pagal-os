@@ -2,10 +2,17 @@
 
 'When I get an email, research the topic, draft a reply' -- described in
 English, auto-built into structured workflow definitions.
+
+Supports four step types:
+- agent: Run an AI agent on a task (original).
+- rule: Deterministic IF/THEN/ELSE logic using simple conditions.
+- transform: Data operations (filter, sort, map, count).
+- notify: Send notifications with template variable substitution.
 """
 
 import json
 import logging
+import operator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -27,7 +34,11 @@ class Workflow:
     Attributes:
         name: Short identifier for the workflow.
         trigger: How the workflow starts ('manual', 'schedule:every 1h', 'webhook:http').
-        steps: Ordered list of step dicts, each with 'agent' and 'task' keys.
+        steps: Ordered list of step dicts. Each step has a 'type' key:
+               - 'agent': {'agent': str, 'task': str}
+               - 'rule': {'condition': str, 'then': str, 'else': str}
+               - 'transform': {'action': str, 'field': str, 'operator': str, 'value': any}
+               - 'notify': {'message': str}
         description: Original natural language description.
     """
 
@@ -102,11 +113,187 @@ def create_workflow_from_description(description: str) -> dict[str, Any]:
         return {"ok": False, "workflow": None, "message": str(e)}
 
 
+def evaluate_rule(condition: str, context: dict[str, Any]) -> bool:
+    """Evaluate a simple rule condition against a context dict.
+
+    Supports operators: >, <, >=, <=, ==, !=, contains, startswith, endswith.
+    The condition format is: 'field operator value' (e.g. 'price < 100').
+
+    Args:
+        condition: The condition string (e.g. 'rating > 4', 'name contains AI').
+        context: Dict of variable names to values from previous step outputs.
+
+    Returns:
+        True if the condition is met, False otherwise.
+    """
+    try:
+        # Parse condition into parts
+        ops = {
+            ">=": operator.ge,
+            "<=": operator.le,
+            "!=": operator.ne,
+            "==": operator.eq,
+            ">": operator.gt,
+            "<": operator.lt,
+            "contains": lambda a, b: str(b) in str(a),
+            "startswith": lambda a, b: str(a).startswith(str(b)),
+            "endswith": lambda a, b: str(a).endswith(str(b)),
+        }
+
+        # Try each operator (longest first to avoid '>' matching before '>=')
+        for op_str, op_func in ops.items():
+            if f" {op_str} " in condition:
+                parts = condition.split(f" {op_str} ", 1)
+                field_name = parts[0].strip()
+                value_str = parts[1].strip()
+
+                # Get field value from context
+                field_value = context.get(field_name, field_name)
+
+                # Try to parse value as number
+                try:
+                    compare_value: Any = float(value_str)
+                    field_value = float(field_value)
+                except (ValueError, TypeError):
+                    compare_value = value_str.strip("'\"")
+
+                return bool(op_func(field_value, compare_value))
+
+        logger.warning("Could not parse condition: '%s'", condition)
+        return False
+    except Exception as e:
+        logger.error("Rule evaluation failed for '%s': %s", condition, e)
+        return False
+
+
+def execute_transform(action: str, data: Any, params: dict[str, Any]) -> Any:
+    """Execute a data transformation operation.
+
+    Supported actions:
+    - filter: Filter list items where field matches operator/value.
+    - sort: Sort list by a field (ascending by default).
+    - map: Extract a single field from each item in a list.
+    - count: Return the count of items.
+
+    Args:
+        action: The transform action ('filter', 'sort', 'map', 'count').
+        data: The data to transform (usually a list of dicts).
+        params: Transform parameters (field, operator, value, reverse, etc.).
+
+    Returns:
+        The transformed data.
+    """
+    try:
+        if action == "filter":
+            field_name = params.get("field", "")
+            op_str = params.get("operator", "==")
+            value = params.get("value")
+
+            if not isinstance(data, list):
+                return data
+
+            ops_map = {
+                ">": operator.gt, "<": operator.lt,
+                ">=": operator.ge, "<=": operator.le,
+                "==": operator.eq, "!=": operator.ne,
+            }
+            op_func = ops_map.get(op_str, operator.eq)
+
+            result = []
+            for item in data:
+                if isinstance(item, dict):
+                    item_val = item.get(field_name)
+                    try:
+                        if op_func(float(item_val), float(value)):
+                            result.append(item)
+                    except (ValueError, TypeError):
+                        if op_func(str(item_val), str(value)):
+                            result.append(item)
+            return result
+
+        elif action == "sort":
+            field_name = params.get("field", "")
+            reverse = params.get("reverse", False)
+
+            if not isinstance(data, list):
+                return data
+
+            try:
+                return sorted(data, key=lambda x: x.get(field_name, 0) if isinstance(x, dict) else x, reverse=reverse)
+            except (TypeError, AttributeError):
+                return data
+
+        elif action == "map":
+            field_name = params.get("field", "")
+
+            if not isinstance(data, list):
+                return data
+
+            return [item.get(field_name, None) if isinstance(item, dict) else item for item in data]
+
+        elif action == "count":
+            if isinstance(data, list):
+                return len(data)
+            elif isinstance(data, dict):
+                return len(data)
+            elif isinstance(data, str):
+                return len(data)
+            return 0
+
+        else:
+            logger.warning("Unknown transform action: '%s'", action)
+            return data
+    except Exception as e:
+        logger.error("Transform '%s' failed: %s", action, e)
+        return data
+
+
+def execute_notify(message: str, context: dict[str, Any]) -> dict[str, Any]:
+    """Send a notification with template variable substitution.
+
+    Replaces {variable} placeholders in the message with values from context.
+    Also attempts to send via the notifications system if available.
+
+    Args:
+        message: Message template with {variable} placeholders.
+        context: Dict of variable values for substitution.
+
+    Returns:
+        Dict with 'ok', 'message' (the resolved message), and 'sent' flag.
+    """
+    try:
+        # Replace template variables
+        resolved = message
+        for key, value in context.items():
+            placeholder = f"{{{key}}}"
+            if placeholder in resolved:
+                resolved = resolved.replace(placeholder, str(value))
+
+        logger.info("Workflow notification: %s", resolved)
+
+        # Try to send via notifications system
+        sent = False
+        try:
+            from src.core.notifications import send_notification
+            send_notification("info", "workflow", resolved)
+            sent = True
+        except Exception:
+            pass
+
+        return {"ok": True, "message": resolved, "sent": sent}
+    except Exception as e:
+        logger.error("Notification failed: %s", e)
+        return {"ok": False, "error": str(e)}
+
+
 def run_workflow(workflow: Workflow, input_data: str = "") -> dict[str, Any]:
     """Execute a workflow by running each step in sequence.
 
-    Each step is run by loading the specified agent and passing it the task.
-    The output of each step is appended to the context for the next step.
+    Supports four step types:
+    - 'agent' (default): Run an AI agent on a task.
+    - 'rule': Evaluate a condition and choose 'then' or 'else' as output.
+    - 'transform': Apply data transformations (filter, sort, map, count).
+    - 'notify': Send a notification with template variables.
 
     Args:
         workflow: The Workflow object to execute.
@@ -120,45 +307,130 @@ def run_workflow(workflow: Workflow, input_data: str = "") -> dict[str, Any]:
 
         results: list[dict[str, Any]] = []
         context = input_data
+        # Build a context dict for rule evaluation and template substitution
+        context_dict: dict[str, Any] = {"input": input_data, "result": input_data}
         all_ok = True
 
         for i, step in enumerate(workflow.steps):
-            agent_name = step.get("agent", "")
-            task = step.get("task", "")
+            step_type = step.get("type", "agent")
 
-            # Inject context from previous step
-            if context:
-                task = f"{task}\n\nContext from previous step:\n{context}"
-
-            logger.info("Workflow '%s' step %d/%d: agent='%s'", workflow.name, i + 1, len(workflow.steps), agent_name)
+            logger.info(
+                "Workflow '%s' step %d/%d: type='%s'",
+                workflow.name, i + 1, len(workflow.steps), step_type,
+            )
 
             try:
-                agent = load_agent(agent_name)
-                result = run_agent(agent, task)
-                step_result = {
-                    "step": i + 1,
-                    "agent": agent_name,
-                    "task": step.get("task", ""),
-                    "ok": result.ok,
-                    "output": result.output,
-                    "error": result.error,
-                }
-                context = result.output  # pass output to next step
+                if step_type == "agent":
+                    # --- AI Agent Step ---
+                    agent_name = step.get("agent", "")
+                    task = step.get("task", "")
+
+                    # Inject context from previous step
+                    if context:
+                        task = f"{task}\n\nContext from previous step:\n{context}"
+
+                    agent = load_agent(agent_name)
+                    result = run_agent(agent, task)
+                    step_result = {
+                        "step": i + 1,
+                        "type": "agent",
+                        "agent": agent_name,
+                        "task": step.get("task", ""),
+                        "ok": result.ok,
+                        "output": result.output,
+                        "error": result.error,
+                    }
+                    context = result.output
+                    context_dict["result"] = result.output
+
+                elif step_type == "rule":
+                    # --- Deterministic Rule Step ---
+                    condition = step.get("condition", "")
+                    then_val = step.get("then", "")
+                    else_val = step.get("else", "")
+
+                    rule_result = evaluate_rule(condition, context_dict)
+                    output = then_val if rule_result else else_val
+
+                    step_result = {
+                        "step": i + 1,
+                        "type": "rule",
+                        "condition": condition,
+                        "evaluated": rule_result,
+                        "ok": True,
+                        "output": output,
+                        "error": "",
+                    }
+                    context = output
+                    context_dict["result"] = output
+                    context_dict["rule_result"] = rule_result
+
+                elif step_type == "transform":
+                    # --- Data Transform Step ---
+                    action = step.get("action", "")
+                    params = {
+                        k: v for k, v in step.items()
+                        if k not in ("type", "action")
+                    }
+
+                    # Try to parse context as JSON for data operations
+                    data_input: Any = context
+                    try:
+                        data_input = json.loads(context) if isinstance(context, str) else context
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                    transformed = execute_transform(action, data_input, params)
+                    output_str = json.dumps(transformed) if not isinstance(transformed, str) else transformed
+
+                    step_result = {
+                        "step": i + 1,
+                        "type": "transform",
+                        "action": action,
+                        "ok": True,
+                        "output": output_str,
+                        "error": "",
+                    }
+                    context = output_str
+                    context_dict["result"] = transformed
+
+                elif step_type == "notify":
+                    # --- Notification Step ---
+                    message = step.get("message", "")
+                    notify_result = execute_notify(message, context_dict)
+
+                    step_result = {
+                        "step": i + 1,
+                        "type": "notify",
+                        "ok": notify_result.get("ok", False),
+                        "output": notify_result.get("message", ""),
+                        "error": notify_result.get("error", ""),
+                    }
+                    # Don't change context for notify steps
+
+                else:
+                    step_result = {
+                        "step": i + 1,
+                        "type": step_type,
+                        "ok": False,
+                        "output": "",
+                        "error": f"Unknown step type: '{step_type}'",
+                    }
+                    all_ok = False
+
             except FileNotFoundError:
                 step_result = {
                     "step": i + 1,
-                    "agent": agent_name,
-                    "task": step.get("task", ""),
+                    "type": step_type,
                     "ok": False,
                     "output": "",
-                    "error": f"Agent '{agent_name}' not found",
+                    "error": f"Agent '{step.get('agent', '')}' not found",
                 }
                 all_ok = False
             except Exception as e:
                 step_result = {
                     "step": i + 1,
-                    "agent": agent_name,
-                    "task": step.get("task", ""),
+                    "type": step_type,
                     "ok": False,
                     "output": "",
                     "error": str(e),
@@ -166,6 +438,9 @@ def run_workflow(workflow: Workflow, input_data: str = "") -> dict[str, Any]:
                 all_ok = False
 
             results.append(step_result)
+
+            # Update context_dict with step output
+            context_dict[f"step_{i + 1}"] = step_result.get("output", "")
 
             # Stop on failure unless we want to continue
             if not step_result["ok"]:

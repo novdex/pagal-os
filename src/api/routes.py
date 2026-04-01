@@ -2290,3 +2290,160 @@ async def page_settings(request: Request) -> HTMLResponse:
     """
     config = get_config()
     return templates.TemplateResponse(request, "settings.html", {"config": config})
+
+
+# --- Health Monitoring API ---
+
+
+@router.get("/api/health", tags=["health"])
+async def api_health_dashboard() -> dict[str, Any]:
+    """Get system-wide agent health dashboard.
+
+    Returns:
+        Dict with total_agents, healthy/degraded/dead counts, and per-agent status.
+    """
+    try:
+        from src.core.health import get_health_dashboard
+        return get_health_dashboard()
+    except Exception as e:
+        logger.error("Health dashboard error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/health/{agent_name}", tags=["health"])
+async def api_health_agent(agent_name: str) -> dict[str, Any]:
+    """Get health status of a specific agent.
+
+    Args:
+        agent_name: The agent to check.
+
+    Returns:
+        Dict with agent health status, uptime, restart count, etc.
+    """
+    try:
+        from src.core.health import check_health
+        health = check_health(agent_name)
+        return {
+            "agent_name": health.agent_name,
+            "status": health.status,
+            "last_heartbeat": health.last_heartbeat,
+            "uptime_seconds": round(health.uptime_seconds, 1),
+            "restart_count": health.restart_count,
+            "errors_last_hour": health.errors_last_hour,
+        }
+    except Exception as e:
+        logger.error("Health check error for '%s': %s", agent_name, e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Batch Processing API ---
+
+
+class CreateBatchRequest(BaseModel):
+    """Request body for creating a batch job."""
+
+    agent_name: str
+    items: list[str]
+
+
+class RunBatchRequest(BaseModel):
+    """Request body for running a batch job."""
+
+    parallel: bool = False
+    workers: int = 3
+
+
+@router.post("/api/batches", tags=["batches"])
+async def api_create_batch(req: CreateBatchRequest) -> dict[str, Any]:
+    """Create a new batch job.
+
+    Args:
+        req: Request with agent_name and list of task items.
+
+    Returns:
+        Dict with batch_id and item count.
+    """
+    try:
+        from src.core.batch import create_batch
+        batch_id = create_batch(req.agent_name, req.items)
+        return {"ok": True, "batch_id": batch_id, "items_count": len(req.items)}
+    except Exception as e:
+        logger.error("Batch creation error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/batches/{batch_id}/run", tags=["batches"])
+async def api_run_batch(batch_id: str, req: RunBatchRequest | None = None) -> dict[str, Any]:
+    """Run a batch job (sequential or parallel).
+
+    Args:
+        batch_id: The batch job ID.
+        req: Optional request body with parallel mode and worker count.
+
+    Returns:
+        Dict with completion summary.
+    """
+    try:
+        from src.core.batch import run_batch, run_batch_parallel
+
+        if req and req.parallel:
+            return run_batch_parallel(batch_id, workers=req.workers)
+        return run_batch(batch_id)
+    except Exception as e:
+        logger.error("Batch run error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/batches", tags=["batches"])
+async def api_list_batches() -> dict[str, Any]:
+    """List all batch jobs.
+
+    Returns:
+        Dict with list of batch job summaries.
+    """
+    try:
+        from src.core.batch import list_batches
+        return {"ok": True, "batches": list_batches()}
+    except Exception as e:
+        logger.error("Batch list error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/batches/{batch_id}", tags=["batches"])
+async def api_batch_status(batch_id: str) -> dict[str, Any]:
+    """Get the status of a specific batch job.
+
+    Args:
+        batch_id: The batch job ID.
+
+    Returns:
+        Dict with batch status, progress, and completion info.
+    """
+    try:
+        from src.core.batch import get_batch_status
+        return get_batch_status(batch_id)
+    except Exception as e:
+        logger.error("Batch status error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.delete("/api/batches/{batch_id}", tags=["batches"])
+async def api_cancel_batch(batch_id: str) -> dict[str, Any]:
+    """Cancel a running or queued batch job.
+
+    Args:
+        batch_id: The batch job ID to cancel.
+
+    Returns:
+        Dict with cancellation status.
+    """
+    try:
+        from src.core.batch import cancel_batch
+        if cancel_batch(batch_id):
+            return {"ok": True, "message": f"Batch '{batch_id}' cancelled"}
+        raise HTTPException(status_code=404, detail=f"Batch '{batch_id}' not found or already completed")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Batch cancel error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e

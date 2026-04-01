@@ -1454,6 +1454,165 @@ def cmd_doctor(_args: argparse.Namespace) -> None:
     print_doctor_report(report)
 
 
+# --- Batch Commands ---
+
+
+def cmd_batch_create(args: argparse.Namespace) -> None:
+    """Handle 'batch create' -- create a batch job from a file of items.
+
+    Args:
+        args: Parsed CLI arguments with 'agent' and 'file' fields.
+    """
+    from src.core.batch import create_batch
+
+    try:
+        from pathlib import Path
+
+        items_path = Path(args.file)
+        if not items_path.exists():
+            print(f"File not found: {args.file}", file=sys.stderr)
+            sys.exit(1)
+
+        items = [line.strip() for line in items_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        if not items:
+            print("File is empty or has no valid items.", file=sys.stderr)
+            sys.exit(1)
+
+        batch_id = create_batch(args.agent, items)
+        print(f"Batch '{batch_id}' created with {len(items)} items for agent '{args.agent}'")
+        print(f"Run it with: python pagal.py batch run {batch_id}")
+        if hasattr(args, "parallel") and args.parallel:
+            print(f"  Or parallel: python pagal.py batch run {batch_id} --parallel")
+    except Exception as e:
+        print(f"Error creating batch: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_batch_run(args: argparse.Namespace) -> None:
+    """Handle 'batch run' -- execute a batch job.
+
+    Args:
+        args: Parsed CLI arguments with 'batch_id' and optional 'parallel'/'workers'.
+    """
+    from src.core.batch import run_batch, run_batch_parallel
+
+    batch_id = args.batch_id
+    parallel = hasattr(args, "parallel") and args.parallel
+    workers = args.workers if hasattr(args, "workers") and args.workers else 3
+
+    print(f"Running batch '{batch_id}' {'(parallel, {workers} workers)' if parallel else '(sequential)'}...")
+
+    if parallel:
+        result = run_batch_parallel(batch_id, workers=workers)
+    else:
+        result = run_batch(batch_id)
+
+    if result.get("ok"):
+        print(f"\nBatch completed!")
+        print(f"  Completed: {result['completed']}/{result['total']}")
+        print(f"  Failed:    {result['failed']}/{result['total']}")
+        print(f"  Duration:  {result['duration']:.1f}s")
+    else:
+        print(f"Batch failed: {result.get('error', 'unknown')}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_batch_status(args: argparse.Namespace) -> None:
+    """Handle 'batch status' -- check batch progress.
+
+    Args:
+        args: Parsed CLI arguments with 'batch_id' field.
+    """
+    from src.core.batch import get_batch_status
+
+    status = get_batch_status(args.batch_id)
+    if not status.get("ok"):
+        print(f"Error: {status.get('error', 'unknown')}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Batch: {status['batch_id']}")
+    print(f"  Agent:    {status['agent_name']}")
+    print(f"  Status:   {status['status']}")
+    print(f"  Progress: {status['progress']:.1f}%")
+    print(f"  Items:    {status['completed']} done, {status['failed']} failed, {status['total']} total")
+    if status['eta_seconds'] > 0:
+        print(f"  ETA:      {status['eta_seconds']:.0f}s remaining")
+
+
+def cmd_batch_list(_args: argparse.Namespace) -> None:
+    """Handle 'batch list' -- list all batch jobs.
+
+    Args:
+        _args: Parsed CLI arguments (unused).
+    """
+    from src.core.batch import list_batches
+
+    batches = list_batches()
+    if not batches:
+        print("No batch jobs. Create one with:")
+        print("  python pagal.py batch create <agent> --file items.txt")
+        return
+
+    print(f"{'ID':<10} {'Agent':<20} {'Status':<12} {'Progress':<10} {'Items'}")
+    print("-" * 65)
+    for b in batches:
+        print(f"{b['id']:<10} {b['agent_name']:<20} {b['status']:<12} {b['progress']:.0f}%{'':>5} {b['items_count']}")
+
+
+def cmd_batch_cancel(args: argparse.Namespace) -> None:
+    """Handle 'batch cancel' -- cancel a running batch.
+
+    Args:
+        args: Parsed CLI arguments with 'batch_id' field.
+    """
+    from src.core.batch import cancel_batch
+
+    if cancel_batch(args.batch_id):
+        print(f"Batch '{args.batch_id}' cancelled.")
+    else:
+        print(f"Batch '{args.batch_id}' not found or already completed.", file=sys.stderr)
+        sys.exit(1)
+
+
+# --- Health Commands ---
+
+
+def cmd_health(args: argparse.Namespace) -> None:
+    """Handle the 'health' command -- show agent health status.
+
+    Args:
+        args: Parsed CLI arguments with optional 'agent' field.
+    """
+    from src.core.health import check_health, get_health_dashboard
+
+    if hasattr(args, "agent") and args.agent:
+        health = check_health(args.agent)
+        status_icon = {"healthy": "[OK]", "degraded": "[!!]", "dead": "[XX]"}
+        print(f"Agent: {health.agent_name}")
+        print(f"  Status:       {status_icon.get(health.status, '[?]')} {health.status}")
+        print(f"  Uptime:       {health.uptime_seconds:.0f}s")
+        print(f"  Restarts:     {health.restart_count}")
+        print(f"  Errors (1h):  {health.errors_last_hour}")
+    else:
+        dashboard = get_health_dashboard()
+        print("System Health Dashboard")
+        print(f"  Total:    {dashboard['total_agents']} agents")
+        print(f"  Healthy:  {dashboard['healthy']}")
+        print(f"  Degraded: {dashboard['degraded']}")
+        print(f"  Dead:     {dashboard['dead']}")
+
+        if dashboard["agents"]:
+            print(f"\n{'Agent':<20} {'Status':<12} {'Uptime':<12} {'Restarts':<10} {'Errors/hr'}")
+            print("-" * 65)
+            for a in dashboard["agents"]:
+                status_icon = {"healthy": "[OK]", "degraded": "[!!]", "dead": "[XX]"}
+                icon = status_icon.get(a["status"], "[?]")
+                print(
+                    f"{a['agent_name']:<20} {icon} {a['status']:<8} "
+                    f"{a['uptime_seconds']:.0f}s{'':>5} {a['restart_count']:<10} {a['errors_last_hour']}"
+                )
+
+
 def main() -> None:
     """Entry point for the PAGAL OS CLI."""
     _setup_logging()
@@ -1711,6 +1870,36 @@ def main() -> None:
     notif_p.add_argument("--unread", action="store_true", help="Show only unread notifications")
     notif_p.add_argument("--mark-all-read", action="store_true", help="Mark all notifications as read")
 
+    # --- Batch commands ---
+    batch_p = subparsers.add_parser("batch", help="Batch processing — run agents on multiple items")
+    batch_sub = batch_p.add_subparsers(dest="batch_command", help="Batch sub-commands")
+
+    # pagal batch create <agent> --file items.txt
+    batch_create_p = batch_sub.add_parser("create", help="Create a batch job from a file of items")
+    batch_create_p.add_argument("agent", help="Agent name to run on each item")
+    batch_create_p.add_argument("--file", required=True, help="Text file with one task per line")
+
+    # pagal batch run <batch_id> [--parallel] [--workers N]
+    batch_run_p = batch_sub.add_parser("run", help="Run a batch job")
+    batch_run_p.add_argument("batch_id", help="Batch job ID")
+    batch_run_p.add_argument("--parallel", action="store_true", help="Run items in parallel")
+    batch_run_p.add_argument("--workers", type=int, default=3, help="Number of parallel workers (default 3)")
+
+    # pagal batch status <batch_id>
+    batch_status_p = batch_sub.add_parser("status", help="Check batch progress")
+    batch_status_p.add_argument("batch_id", help="Batch job ID")
+
+    # pagal batch list
+    batch_sub.add_parser("list", help="List all batch jobs")
+
+    # pagal batch cancel <batch_id>
+    batch_cancel_p = batch_sub.add_parser("cancel", help="Cancel a running batch")
+    batch_cancel_p.add_argument("batch_id", help="Batch job ID")
+
+    # --- Health commands ---
+    health_p = subparsers.add_parser("health", help="Agent health monitoring")
+    health_p.add_argument("agent", nargs="?", default=None, help="Agent name (optional, shows dashboard if omitted)")
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -1841,6 +2030,22 @@ def main() -> None:
             registry_p.print_help()
         return
 
+    # Route batch sub-commands
+    if args.command == "batch":
+        batch_commands = {
+            "create": cmd_batch_create,
+            "run": cmd_batch_run,
+            "status": cmd_batch_status,
+            "list": cmd_batch_list,
+            "cancel": cmd_batch_cancel,
+        }
+        handler = batch_commands.get(args.batch_command)
+        if handler:
+            handler(args)
+        else:
+            batch_p.print_help()
+        return
+
     commands = {
         "create": cmd_create,
         "run": cmd_run,
@@ -1868,6 +2073,7 @@ def main() -> None:
         "debug": cmd_debug,
         "credits": cmd_credits,
         "notifications": cmd_notifications,
+        "health": cmd_health,
     }
 
     handler = commands.get(args.command)

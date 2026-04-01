@@ -282,8 +282,23 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
         except Exception:
             tracking_enabled = False
 
+        # --- Health Monitor: enable heartbeat tracking ---
+        try:
+            from src.core.health import record_heartbeat, record_error as _record_health_error
+            health_enabled = True
+            record_heartbeat(agent.name)
+        except Exception:
+            health_enabled = False
+
         try:
             for loop_num in range(max_loops):
+                # --- Health: send heartbeat every loop iteration ---
+                if health_enabled:
+                    try:
+                        record_heartbeat(agent.name)
+                    except Exception:
+                        pass
+
                 # Check resource limits before each LLM call
                 if tracking_enabled:
                     limit_exceeded = check_all_limits(resource_limits)
@@ -608,6 +623,12 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
 
     except Exception as e:
         logger.error("Agent '%s' crashed: %s", agent.name, e, exc_info=True)
+        # --- Health: record error ---
+        if health_enabled:
+            try:
+                _record_health_error(agent.name)
+            except Exception:
+                pass
         # --- Trace: log error ---
         if tracing_enabled:
             try:

@@ -11,3 +11,15 @@ try:
     from src.tools import multimodal  # noqa: F401
 except Exception:
     pass
+
+# Web crawler tools — import errors are non-fatal
+try:
+    from src.tools import crawler  # noqa: F401
+except Exception:
+    pass
+
+# Integration tools (Google, GitHub, Notion) — import errors are non-fatal
+try:
+    from src import integrations  # noqa: F401
+except Exception:
+    pass

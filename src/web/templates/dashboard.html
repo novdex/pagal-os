@@ -51,7 +51,10 @@
         <div class="agent-card card" data-name="{{ agent.name }}">
             <div class="agent-header">
                 <h3>{{ agent.name }}</h3>
-                <span class="status-dot {% if agent.status == 'running' %}status-running{% else %}status-idle{% endif %}"></span>
+                <div style="display:flex; align-items:center; gap:0.4rem;">
+                    <span class="health-dot" id="health-{{ agent.name }}" title="Health: unknown" style="width:10px; height:10px; border-radius:50%; background:#888; display:inline-block;"></span>
+                    <span class="status-dot {% if agent.status == 'running' %}status-running{% else %}status-idle{% endif %}"></span>
+                </div>
             </div>
             <p class="agent-desc">{{ agent.description }}</p>
             <div class="agent-meta">
@@ -134,6 +137,31 @@
         </table>
         <div id="process-empty" style="text-align:center; padding:1rem;">
             <p class="text-muted">No active processes.</p>
+        </div>
+    </div>
+</section>
+
+<!-- Agent Health Overview -->
+<section class="health-section" style="margin-top:1.5rem;">
+    <div class="section-header">
+        <h2>Agent Health</h2>
+    </div>
+    <div id="health-dashboard" class="card" style="display:flex; gap:2rem; flex-wrap:wrap; padding:1.25rem;">
+        <div style="text-align:center;">
+            <div id="health-total" style="font-size:2rem; font-weight:bold; color:var(--accent);">-</div>
+            <div class="text-muted">Total</div>
+        </div>
+        <div style="text-align:center;">
+            <div id="health-healthy" style="font-size:2rem; font-weight:bold; color:#22c55e;">-</div>
+            <div class="text-muted">Healthy</div>
+        </div>
+        <div style="text-align:center;">
+            <div id="health-degraded" style="font-size:2rem; font-weight:bold; color:#f59e0b;">-</div>
+            <div class="text-muted">Degraded</div>
+        </div>
+        <div style="text-align:center;">
+            <div id="health-dead" style="font-size:2rem; font-weight:bold; color:#ef4444;">-</div>
+            <div class="text-muted">Dead</div>
         </div>
     </div>
 </section>
@@ -581,6 +609,7 @@
     loadCredits();
     loadDashNotifCount();
     loadRegistryCount();
+    loadHealthDashboard();
 
     // Refresh hands every 10 seconds, processes every 5, approvals every 3
     setInterval(loadHands, 10000);
@@ -589,5 +618,35 @@
     setInterval(loadApprovals, 3000);
     setInterval(loadCredits, 30000);
     setInterval(loadDashNotifCount, 10000);
+    setInterval(loadHealthDashboard, 15000);
+
+    // --- Health Dashboard ---
+    async function loadHealthDashboard() {
+        try {
+            const resp = await fetch('/api/health');
+            const data = await resp.json();
+            document.getElementById('health-total').textContent = data.total_agents || 0;
+            document.getElementById('health-healthy').textContent = data.healthy || 0;
+            document.getElementById('health-degraded').textContent = data.degraded || 0;
+            document.getElementById('health-dead').textContent = data.dead || 0;
+
+            // Update health dots on agent cards
+            const colorMap = { healthy: '#22c55e', degraded: '#f59e0b', dead: '#ef4444' };
+            if (data.agents) {
+                for (const agent of data.agents) {
+                    const dot = document.getElementById('health-' + agent.agent_name);
+                    if (dot) {
+                        dot.style.background = colorMap[agent.status] || '#888';
+                        dot.title = 'Health: ' + agent.status +
+                            ' | Uptime: ' + Math.round(agent.uptime_seconds) + 's' +
+                            ' | Restarts: ' + agent.restart_count +
+                            ' | Errors/hr: ' + agent.errors_last_hour;
+                    }
+                }
+            }
+        } catch (e) {
+            // Health API may not be available yet
+        }
+    }
 </script>
 {% endblock %}
