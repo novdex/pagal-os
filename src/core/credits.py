@@ -1,20 +1,15 @@
-"""Credits System — earn credits when others use your agents.
+"""Credits System -- earn credits when others use your agents.
 
 Virtual credits economy for the PAGAL OS marketplace.
-Uses SQLite for persistent storage at ~/.pagal-os/credits.db.
+Uses the main pagal.db database for persistent storage.
 """
 
 import logging
 import sqlite3
-import time
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("pagal_os")
-
-# Storage
-_PAGAL_DIR = Path.home() / ".pagal-os"
-CREDITS_DB = _PAGAL_DIR / "credits.db"
 
 # Starting balance for new users
 _STARTING_BALANCE = 100.0
@@ -29,24 +24,31 @@ CREDIT_COSTS: dict[str, float] = {
 
 
 def _get_conn() -> sqlite3.Connection:
-    """Get a SQLite connection to the credits database.
+    """Get a SQLite connection to the main PAGAL OS database.
 
-    Note: credits use a separate database file (credits.db) for
-    isolation. This is intentional.
+    Delegates to the central database module. Falls back to a direct
+    connection to pagal.db if the module is unavailable.
 
     Returns:
         sqlite3.Connection with row_factory set to sqlite3.Row.
     """
-    _PAGAL_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(CREDITS_DB))
-    conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        from src.core.database import get_connection
+        return get_connection()
+    except Exception:
+        db_path = Path.home() / ".pagal-os" / "pagal.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        return conn
 
 
 def init_credits_db() -> None:
     """Create the credits tables and give 100 free credits to the local user.
 
-    Safe to call multiple times — uses IF NOT EXISTS.
+    Creates tables inside the main pagal.db. (Previously used a separate
+    credits.db file, now consolidated.) Safe to call multiple times --
+    uses IF NOT EXISTS.
     """
     try:
         conn = _get_conn()
@@ -81,13 +83,13 @@ def init_credits_db() -> None:
             )
             cursor.execute(
                 "INSERT INTO credit_transactions (user_id, amount, description, agent_name) "
-                "VALUES ('local', ?, 'Welcome bonus — 100 free credits', '')",
+                "VALUES ('local', ?, 'Welcome bonus -- 100 free credits', '')",
                 (_STARTING_BALANCE,),
             )
 
         conn.commit()
         conn.close()
-        logger.info("Credits database initialised at %s", CREDITS_DB)
+        logger.info("Credits tables initialised in main database")
 
     except Exception as e:
         logger.error("Failed to initialise credits database: %s", e)

@@ -168,29 +168,8 @@ def init_all_tables() -> None:
                 last_worked_at TIMESTAMP,
                 notes TEXT DEFAULT ''
             );
-        """)
-        conn.commit()
-        logger.info("All database tables initialised in %s", _DB_PATH)
-    except Exception as e:
-        logger.error("Failed to initialise database tables: %s", e)
-    finally:
-        conn.close()
 
-
-# Also initialise the traces database (separate file for historical reasons)
-def init_traces_tables() -> None:
-    """Create the traces table in the separate traces.db file.
-
-    Kept separate because observability.py uses its own DB path.
-    This function is a convenience wrapper; the main traces logic
-    lives in observability.py.
-    """
-    try:
-        traces_path = Path.home() / ".pagal-os" / "traces.db"
-        traces_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(traces_path), timeout=10)
-        conn.row_factory = sqlite3.Row
-        conn.execute("""
+            -- Agent traces (previously in separate traces.db)
             CREATE TABLE IF NOT EXISTS agent_traces (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 run_id TEXT NOT NULL,
@@ -200,41 +179,21 @@ def init_traces_tables() -> None:
                 duration_ms INTEGER DEFAULT 0,
                 tokens INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.execute("""
+            );
+
             CREATE INDEX IF NOT EXISTS idx_traces_run_id
-            ON agent_traces(run_id)
-        """)
-        conn.execute("""
+                ON agent_traces(run_id);
             CREATE INDEX IF NOT EXISTS idx_traces_agent
-            ON agent_traces(agent_name)
-        """)
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.error("Failed to initialise traces tables: %s", e)
+                ON agent_traces(agent_name);
 
-
-def init_credits_tables() -> None:
-    """Create the credits tables in the separate credits.db file.
-
-    Kept separate because credits.py uses its own DB path.
-    """
-    try:
-        credits_path = Path.home() / ".pagal-os" / "credits.db"
-        credits_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(credits_path))
-        conn.row_factory = sqlite3.Row
-        conn.execute("""
+            -- Credits (previously in separate credits.db)
             CREATE TABLE IF NOT EXISTS credits (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL DEFAULT 'local',
                 balance REAL DEFAULT 100.0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.execute("""
+            );
+
             CREATE TABLE IF NOT EXISTS credit_transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
@@ -242,9 +201,29 @@ def init_credits_tables() -> None:
                 description TEXT,
                 agent_name TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
+            );
         """)
         conn.commit()
-        conn.close()
+        logger.info("All database tables initialised in %s", _DB_PATH)
     except Exception as e:
-        logger.error("Failed to initialise credits tables: %s", e)
+        logger.error("Failed to initialise database tables: %s", e)
+    finally:
+        conn.close()
+
+
+def init_traces_tables() -> None:
+    """Create the traces tables in the main pagal.db.
+
+    Backward-compatible wrapper -- traces are now part of init_all_tables().
+    Safe to call independently; delegates to init_all_tables().
+    """
+    init_all_tables()
+
+
+def init_credits_tables() -> None:
+    """Create the credits tables in the main pagal.db.
+
+    Backward-compatible wrapper -- credits are now part of init_all_tables().
+    Safe to call independently; delegates to init_all_tables().
+    """
+    init_all_tables()

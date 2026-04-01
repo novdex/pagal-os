@@ -176,8 +176,9 @@ def track_cost(
     model: str,
     input_tokens: int = 0,
     output_tokens: int = 0,
+    estimated: bool = True,
 ) -> float:
-    """Estimate and record cost for an LLM call.
+    """Record cost for an LLM call.
 
     Calculates cost based on token count and model pricing, then inserts
     or updates the budget_tracking row for today. If input_tokens and
@@ -189,9 +190,11 @@ def track_cost(
         model: Model identifier used for the call.
         input_tokens: Token count for the prompt/input.
         output_tokens: Token count for the response/output.
+        estimated: True if token counts are heuristic estimates,
+            False if actual counts from the API response.
 
     Returns:
-        The estimated cost in USD for this call.
+        The cost in USD for this call.
     """
     try:
         # Prefer explicit input+output counts when available
@@ -200,6 +203,12 @@ def track_cost(
 
         cost_usd = calculate_cost(tokens, model)
         today = datetime.now().strftime("%Y-%m-%d")
+
+        if not estimated:
+            logger.debug(
+                "Tracking actual token counts for '%s': %d tokens, $%.6f",
+                agent_name, tokens, cost_usd,
+            )
 
         conn = _get_conn()
         try:

@@ -21,17 +21,17 @@ logger = logging.getLogger("pagal_os")
 _PAGAL_DIR = Path.home() / ".pagal-os"
 BACKUPS_DIR = _PAGAL_DIR / "backups"
 
-# Files and directories to include in a backup
+# Files and directories to include in a backup.
+# Note: traces and credits tables are now consolidated into pagal.db,
+# so credits.db and traces.db are no longer listed separately.
 _BACKUP_TARGETS: list[str] = [
-    "agents",            # directory — all agent YAMLs
-    "pagal.db",          # main database (memory, knowledge, analytics)
-    "credits.db",        # credits database
-    "traces.db",         # observability traces
+    "agents",            # directory -- all agent YAMLs
+    "pagal.db",          # main database (memory, knowledge, analytics, traces, credits)
     "marketplace.json",  # marketplace state
     "registry.json",     # agent registry
     "hands.json",        # scheduled hands state
     "worlds.json",       # worlds state
-    "versions",          # directory — agent version history
+    "versions",          # directory -- agent version history
 ]
 
 

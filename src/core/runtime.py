@@ -388,18 +388,30 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
                         error=result["error"],
                     )
 
-                # Track token usage — count input and output separately
+                # Track token usage — prefer actual counts from API response
                 from src.core.budget import estimate_tokens as _est_tokens
 
-                # Input tokens: sum of all message content sent to the LLM
-                _input_tok = sum(
-                    _est_tokens(m.get("content", "") or "")
-                    for m in messages
-                )
-                # Output tokens: the response content
-                _output_content = result.get("content", "") or ""
-                _output_tok = _est_tokens(_output_content)
-                estimated_tokens = _input_tok + _output_tok
+                _usage = result.get("usage")
+                _tokens_estimated = True
+                if _usage and isinstance(_usage, dict):
+                    # Use actual token counts from the API
+                    _input_tok = _usage.get("prompt_tokens", 0)
+                    _output_tok = _usage.get("completion_tokens", 0)
+                    estimated_tokens = _usage.get("total_tokens", 0) or (_input_tok + _output_tok)
+                    _tokens_estimated = False
+                    logger.debug(
+                        "Agent '%s' actual tokens: input=%d, output=%d, total=%d",
+                        agent.name, _input_tok, _output_tok, estimated_tokens,
+                    )
+                else:
+                    # Fall back to heuristic estimation
+                    _input_tok = sum(
+                        _est_tokens(m.get("content", "") or "")
+                        for m in messages
+                    )
+                    _output_content = result.get("content", "") or ""
+                    _output_tok = _est_tokens(_output_content)
+                    estimated_tokens = _input_tok + _output_tok
 
                 if tracking_enabled:
                     track_usage(agent.name, tokens=estimated_tokens)
@@ -413,6 +425,7 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
                         track_cost(
                             agent.name, estimated_tokens, agent.model,
                             input_tokens=_input_tok, output_tokens=_output_tok,
+                            estimated=_tokens_estimated,
                         )
                         _budget = _recheck(agent.name)
                         if not _budget["ok"]:

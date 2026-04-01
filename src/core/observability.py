@@ -1,43 +1,45 @@
-"""PAGAL OS Agent Observability — trace every LLM call, tool use, and decision.
+"""PAGAL OS Agent Observability -- trace every LLM call, tool use, and decision.
 
-Stores structured trace events in a SQLite table so users can see exactly what
-an agent did during a run: every LLM call, every tool invocation, every error,
-and every decision.
-
-The traces database lives at ``~/.pagal-os/traces.db``.
+Stores structured trace events in the ``agent_traces`` table inside the main
+``pagal.db`` database so users can see exactly what an agent did during a run:
+every LLM call, every tool invocation, every error, and every decision.
 """
 
-import json
 import logging
 import sqlite3
-import time
 import uuid
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("pagal_os")
 
-DB_PATH = Path.home() / ".pagal-os" / "traces.db"
-
 
 def _get_db() -> sqlite3.Connection:
-    """Open (or create) the traces database and return a connection.
+    """Get a connection to the main PAGAL OS database for traces.
 
-    Note: traces use a separate database file (traces.db) to avoid
-    contention with the main pagal.db. This is intentional.
+    Delegates to the central database module. Falls back to a direct
+    connection if the module is unavailable.
 
     Returns:
         sqlite3 Connection with row_factory set to Row.
     """
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH), timeout=10)
-    conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        from src.core.database import get_connection
+        return get_connection()
+    except Exception:
+        from pathlib import Path
+        db_path = Path.home() / ".pagal-os" / "pagal.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(db_path), timeout=10)
+        conn.row_factory = sqlite3.Row
+        return conn
 
 
 def init_traces_db() -> None:
-    """Create the agent_traces table if it doesn't already exist."""
+    """Create the agent_traces table if it doesn't already exist.
+
+    Creates the table inside the main pagal.db. (Previously used a
+    separate traces.db file, now consolidated.)
+    """
     try:
         conn = _get_db()
         conn.execute("""
@@ -62,7 +64,7 @@ def init_traces_db() -> None:
         """)
         conn.commit()
         conn.close()
-        logger.debug("Traces database initialized at %s", DB_PATH)
+        logger.debug("Traces tables initialised in main database")
     except Exception as e:
         logger.error("Failed to initialize traces DB: %s", e)
 

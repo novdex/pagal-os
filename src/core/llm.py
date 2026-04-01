@@ -30,7 +30,9 @@ def call_llm(
         timeout: Request timeout in seconds.
 
     Returns:
-        Dict with keys: ok (bool), content (str), tool_calls (list|None), error (str).
+        Dict with keys: ok (bool), content (str), tool_calls (list|None),
+        usage (dict|None with prompt_tokens, completion_tokens, total_tokens),
+        error (str).
     """
     if model.startswith("ollama/"):
         return _call_ollama(messages, model, tools, timeout)
@@ -79,22 +81,35 @@ def _call_ollama(
         content = message.get("content", "")
         tool_calls = message.get("tool_calls")
 
+        # Extract token usage from Ollama response
+        # Ollama returns prompt_eval_count and eval_count
+        usage: dict[str, int] | None = None
+        prompt_eval = data.get("prompt_eval_count")
+        eval_count = data.get("eval_count")
+        if prompt_eval is not None or eval_count is not None:
+            usage = {
+                "prompt_tokens": prompt_eval or 0,
+                "completion_tokens": eval_count or 0,
+                "total_tokens": (prompt_eval or 0) + (eval_count or 0),
+            }
+
         return {
             "ok": True,
             "content": content,
             "tool_calls": tool_calls,
+            "usage": usage,
             "error": "",
         }
 
     except httpx.TimeoutException:
         logger.error("Ollama request timed out after %ds", timeout)
-        return {"ok": False, "content": "", "tool_calls": None, "error": f"Timeout after {timeout}s"}
+        return {"ok": False, "content": "", "tool_calls": None, "usage": None, "error": f"Timeout after {timeout}s"}
     except httpx.HTTPStatusError as e:
         logger.error("Ollama HTTP error: %s", e)
-        return {"ok": False, "content": "", "tool_calls": None, "error": f"HTTP {e.response.status_code}: {e.response.text}"}
+        return {"ok": False, "content": "", "tool_calls": None, "usage": None, "error": f"HTTP {e.response.status_code}: {e.response.text}"}
     except Exception as e:
         logger.error("Ollama request failed: %s", e)
-        return {"ok": False, "content": "", "tool_calls": None, "error": str(e)}
+        return {"ok": False, "content": "", "tool_calls": None, "usage": None, "error": str(e)}
 
 
 def _call_openrouter(
@@ -116,7 +131,7 @@ def _call_openrouter(
     """
     api_key = os.getenv("OPENROUTER_API_KEY", "")
     if not api_key:
-        return {"ok": False, "content": "", "tool_calls": None, "error": "OPENROUTER_API_KEY not set"}
+        return {"ok": False, "content": "", "tool_calls": None, "usage": None, "error": "OPENROUTER_API_KEY not set"}
 
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
@@ -141,7 +156,7 @@ def _call_openrouter(
 
         choices = data.get("choices", [])
         if not choices:
-            return {"ok": False, "content": "", "tool_calls": None, "error": "No choices in response"}
+            return {"ok": False, "content": "", "tool_calls": None, "usage": None, "error": "No choices in response"}
 
         message = choices[0].get("message", {})
         content = message.get("content", "")
@@ -161,19 +176,30 @@ def _call_openrouter(
                     },
                 })
 
+        # Extract token usage from OpenRouter response
+        usage: dict[str, int] | None = None
+        raw_usage = data.get("usage")
+        if isinstance(raw_usage, dict):
+            usage = {
+                "prompt_tokens": raw_usage.get("prompt_tokens", 0),
+                "completion_tokens": raw_usage.get("completion_tokens", 0),
+                "total_tokens": raw_usage.get("total_tokens", 0),
+            }
+
         return {
             "ok": True,
             "content": content or "",
             "tool_calls": tool_calls,
+            "usage": usage,
             "error": "",
         }
 
     except httpx.TimeoutException:
         logger.error("OpenRouter request timed out after %ds", timeout)
-        return {"ok": False, "content": "", "tool_calls": None, "error": f"Timeout after {timeout}s"}
+        return {"ok": False, "content": "", "tool_calls": None, "usage": None, "error": f"Timeout after {timeout}s"}
     except httpx.HTTPStatusError as e:
         logger.error("OpenRouter HTTP error: %s", e)
-        return {"ok": False, "content": "", "tool_calls": None, "error": f"HTTP {e.response.status_code}: {e.response.text}"}
+        return {"ok": False, "content": "", "tool_calls": None, "usage": None, "error": f"HTTP {e.response.status_code}: {e.response.text}"}
     except Exception as e:
         logger.error("OpenRouter request failed: %s", e)
-        return {"ok": False, "content": "", "tool_calls": None, "error": str(e)}
+        return {"ok": False, "content": "", "tool_calls": None, "usage": None, "error": str(e)}

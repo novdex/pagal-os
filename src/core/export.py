@@ -87,15 +87,22 @@ def _write_csv(rows: list[dict], file_path: Path) -> str:
         raise
 
 
-def _get_db(db_name: str) -> sqlite3.Connection:
+def _get_db(db_name: str = "pagal.db") -> sqlite3.Connection:
     """Open a SQLite database from the PAGAL OS storage directory.
 
+    All tables are now consolidated in pagal.db. The ``db_name`` parameter
+    is kept for backward compatibility but defaults to 'pagal.db'.
+
     Args:
-        db_name: Database filename (e.g. 'traces.db', 'pagal.db').
+        db_name: Database filename (defaults to 'pagal.db').
 
     Returns:
         sqlite3 Connection with row_factory set to Row.
     """
+    # Redirect legacy separate DB names to the main database
+    if db_name in ("traces.db", "credits.db"):
+        db_name = "pagal.db"
+
     db_path = _PAGAL_DIR / db_name
     conn = sqlite3.connect(str(db_path), timeout=10)
     conn.row_factory = sqlite3.Row
