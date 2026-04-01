@@ -597,6 +597,19 @@ async def page_logs(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(request, "logs.html", {"agents": agents})
 
 
+@router.get("/builder", response_class=HTMLResponse, tags=["web"])
+async def page_builder(request: Request) -> HTMLResponse:
+    """Serve the visual drag-and-drop agent builder page.
+
+    Args:
+        request: FastAPI request object.
+
+    Returns:
+        Rendered HTML builder page.
+    """
+    return templates.TemplateResponse(request, "builder.html")
+
+
 @router.get("/settings", response_class=HTMLResponse, tags=["web"])
 async def page_settings(request: Request) -> HTMLResponse:
     """Serve the settings page.

@@ -1,0 +1,461 @@
+{% extends "base.html" %}
+{% block title %}Agent Builder - PAGAL OS{% endblock %}
+{% block nav_builder %}active{% endblock %}
+
+{% block content %}
+<section class="page-header">
+    <h1>Agent Builder</h1>
+    <p>Drag and drop components to build your agent visually</p>
+</section>
+
+<div class="builder-layout">
+    <!-- Left Sidebar: Component Palette -->
+    <aside class="builder-sidebar builder-palette">
+        <h3 class="sidebar-title">Components</h3>
+
+        <div class="palette-section">
+            <h4 class="palette-heading">Tools</h4>
+            <div class="palette-items" id="palette-tools">
+                <div class="palette-item" draggable="true" data-type="tool" data-value="search_web">
+                    <span class="palette-icon">&#x1F50D;</span> search_web
+                </div>
+                <div class="palette-item" draggable="true" data-type="tool" data-value="browse_url">
+                    <span class="palette-icon">&#x1F310;</span> browse_url
+                </div>
+                <div class="palette-item" draggable="true" data-type="tool" data-value="read_file">
+                    <span class="palette-icon">&#x1F4C4;</span> read_file
+                </div>
+                <div class="palette-item" draggable="true" data-type="tool" data-value="write_file">
+                    <span class="palette-icon">&#x270F;&#xFE0F;</span> write_file
+                </div>
+                <div class="palette-item" draggable="true" data-type="tool" data-value="run_shell">
+                    <span class="palette-icon">&#x1F4BB;</span> run_shell
+                </div>
+                <div class="palette-item" draggable="true" data-type="tool" data-value="screenshot">
+                    <span class="palette-icon">&#x1F4F7;</span> screenshot
+                </div>
+                <div class="palette-item" draggable="true" data-type="tool" data-value="click">
+                    <span class="palette-icon">&#x1F5B1;&#xFE0F;</span> click
+                </div>
+                <div class="palette-item" draggable="true" data-type="tool" data-value="type_text">
+                    <span class="palette-icon">&#x2328;&#xFE0F;</span> type_text
+                </div>
+            </div>
+        </div>
+
+        <div class="palette-section">
+            <h4 class="palette-heading">Models</h4>
+            <div class="palette-items" id="palette-models">
+                <div class="palette-item" draggable="true" data-type="model" data-value="nvidia/nemotron-3-super-120b-a12b:free">
+                    <span class="palette-icon">&#x1F193;</span> Free (Nemotron)
+                </div>
+                <div class="palette-item" draggable="true" data-type="model" data-value="qwen/mimo-v2-pro">
+                    <span class="palette-icon">&#x2B50;</span> Pro (MiMo-V2-Pro)
+                </div>
+                <div class="palette-item" draggable="true" data-type="model" data-value="ollama/llama3">
+                    <span class="palette-icon">&#x1F3E0;</span> Local (Ollama)
+                </div>
+            </div>
+        </div>
+
+        <div class="palette-section">
+            <h4 class="palette-heading">Triggers</h4>
+            <div class="palette-items" id="palette-triggers">
+                <div class="palette-item" draggable="true" data-type="trigger" data-value="on_demand">
+                    <span class="palette-icon">&#x25B6;&#xFE0F;</span> On demand
+                </div>
+                <div class="palette-item" draggable="true" data-type="trigger" data-value="every_5min">
+                    <span class="palette-icon">&#x23F1;&#xFE0F;</span> Every 5 min
+                </div>
+                <div class="palette-item" draggable="true" data-type="trigger" data-value="every_1hour">
+                    <span class="palette-icon">&#x23F0;</span> Every hour
+                </div>
+                <div class="palette-item" draggable="true" data-type="trigger" data-value="daily">
+                    <span class="palette-icon">&#x1F4C5;</span> Daily
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Center: Canvas -->
+    <div class="builder-canvas">
+        <div class="canvas-section">
+            <h4 class="canvas-label">Agent Name</h4>
+            <input type="text" id="agent-name" class="builder-input" placeholder="my_agent" />
+        </div>
+
+        <div class="canvas-section">
+            <h4 class="canvas-label">Tools <span class="text-muted">(drop here)</span></h4>
+            <div class="drop-zone" id="drop-tools" data-accepts="tool">
+                <p class="drop-placeholder">Drag tools from the left sidebar</p>
+            </div>
+        </div>
+
+        <div class="canvas-section">
+            <h4 class="canvas-label">Model <span class="text-muted">(drop here)</span></h4>
+            <div class="drop-zone drop-zone-single" id="drop-model" data-accepts="model">
+                <p class="drop-placeholder">Drag a model from the left sidebar</p>
+            </div>
+        </div>
+
+        <div class="canvas-section">
+            <h4 class="canvas-label">Trigger / Schedule <span class="text-muted">(drop here)</span></h4>
+            <div class="drop-zone drop-zone-single" id="drop-trigger" data-accepts="trigger">
+                <p class="drop-placeholder">Drag a trigger from the left sidebar</p>
+            </div>
+        </div>
+
+        <div class="canvas-section">
+            <h4 class="canvas-label">Personality / Instructions</h4>
+            <textarea id="agent-personality" class="builder-textarea"
+                placeholder="Describe how your agent should behave..."></textarea>
+        </div>
+
+        <div class="canvas-actions">
+            <button class="btn btn-primary btn-lg" id="btn-create-agent">Create Agent</button>
+            <button class="btn btn-secondary btn-lg" id="btn-clear-canvas">Clear All</button>
+        </div>
+
+        <div id="builder-result" class="result-box" style="display:none;"></div>
+    </div>
+
+    <!-- Right Sidebar: YAML Preview -->
+    <aside class="builder-sidebar builder-preview">
+        <h3 class="sidebar-title">YAML Preview</h3>
+        <pre class="yaml-preview" id="yaml-preview">
+# Drop components to see the preview
+name: ""
+description: ""
+model: ""
+tools: []
+personality: ""
+schedule: null
+</pre>
+    </aside>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    "use strict";
+
+    // --- State ---
+    const state = {
+        tools: [],
+        model: "",
+        trigger: "",
+    };
+
+    // Mapping from trigger values to schedule strings (or null for on-demand)
+    const TRIGGER_MAP = {
+        on_demand: null,
+        every_5min: "every 5m",
+        every_1hour: "every 1h",
+        daily: "every 24h",
+    };
+
+    // Human-readable labels for display on cards
+    const TRIGGER_LABELS = {
+        on_demand: "On demand",
+        every_5min: "Every 5 min",
+        every_1hour: "Every hour",
+        daily: "Daily",
+    };
+
+    const MODEL_LABELS = {
+        "nvidia/nemotron-3-super-120b-a12b:free": "Free (Nemotron)",
+        "qwen/mimo-v2-pro": "Pro (MiMo-V2-Pro)",
+        "ollama/llama3": "Local (Ollama)",
+    };
+
+    // --- Drag and Drop ---
+
+    // Make all palette items draggable
+    document.querySelectorAll(".palette-item").forEach(function (item) {
+        item.addEventListener("dragstart", function (e) {
+            const payload = JSON.stringify({
+                type: item.dataset.type,
+                value: item.dataset.value,
+            });
+            e.dataTransfer.setData("text/plain", payload);
+            e.dataTransfer.effectAllowed = "copy";
+            item.classList.add("dragging");
+        });
+
+        item.addEventListener("dragend", function () {
+            item.classList.remove("dragging");
+        });
+    });
+
+    // Set up drop zones
+    document.querySelectorAll(".drop-zone").forEach(function (zone) {
+        zone.addEventListener("dragover", function (e) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "copy";
+            zone.classList.add("drop-hover");
+        });
+
+        zone.addEventListener("dragleave", function () {
+            zone.classList.remove("drop-hover");
+        });
+
+        zone.addEventListener("drop", function (e) {
+            e.preventDefault();
+            zone.classList.remove("drop-hover");
+
+            let data;
+            try {
+                data = JSON.parse(e.dataTransfer.getData("text/plain"));
+            } catch (_err) {
+                return;
+            }
+
+            const accepts = zone.dataset.accepts;
+            if (data.type !== accepts) return; // Wrong zone
+
+            if (data.type === "tool") {
+                addTool(data.value);
+            } else if (data.type === "model") {
+                setModel(data.value);
+            } else if (data.type === "trigger") {
+                setTrigger(data.value);
+            }
+
+            updateYAMLPreview();
+        });
+    });
+
+    // --- Add / Remove Components ---
+
+    function addTool(toolName) {
+        if (state.tools.includes(toolName)) return; // No duplicates
+        state.tools.push(toolName);
+        renderToolCards();
+    }
+
+    function removeTool(toolName) {
+        state.tools = state.tools.filter(function (t) { return t !== toolName; });
+        renderToolCards();
+        updateYAMLPreview();
+    }
+
+    function setModel(modelValue) {
+        state.model = modelValue;
+        renderModelCard();
+    }
+
+    function setTrigger(triggerValue) {
+        state.trigger = triggerValue;
+        renderTriggerCard();
+    }
+
+    // --- Render Cards in Drop Zones ---
+
+    function renderToolCards() {
+        const zone = document.getElementById("drop-tools");
+        zone.innerHTML = "";
+
+        if (state.tools.length === 0) {
+            zone.innerHTML = '<p class="drop-placeholder">Drag tools from the left sidebar</p>';
+            return;
+        }
+
+        state.tools.forEach(function (tool) {
+            const card = document.createElement("div");
+            card.className = "canvas-card";
+            card.innerHTML =
+                '<span class="canvas-card-name">' + escapeHtml(tool) + "</span>" +
+                '<button class="canvas-card-remove" data-tool="' + escapeHtml(tool) + '">&times;</button>';
+            zone.appendChild(card);
+        });
+
+        // Attach remove handlers
+        zone.querySelectorAll(".canvas-card-remove").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                removeTool(btn.dataset.tool);
+            });
+        });
+    }
+
+    function renderModelCard() {
+        const zone = document.getElementById("drop-model");
+        if (!state.model) {
+            zone.innerHTML = '<p class="drop-placeholder">Drag a model from the left sidebar</p>';
+            return;
+        }
+
+        const label = MODEL_LABELS[state.model] || state.model;
+        zone.innerHTML =
+            '<div class="canvas-card">' +
+            '<span class="canvas-card-name">' + escapeHtml(label) + "</span>" +
+            '<button class="canvas-card-remove" id="remove-model">&times;</button>' +
+            "</div>";
+
+        document.getElementById("remove-model").addEventListener("click", function () {
+            state.model = "";
+            renderModelCard();
+            updateYAMLPreview();
+        });
+    }
+
+    function renderTriggerCard() {
+        const zone = document.getElementById("drop-trigger");
+        if (!state.trigger) {
+            zone.innerHTML = '<p class="drop-placeholder">Drag a trigger from the left sidebar</p>';
+            return;
+        }
+
+        const label = TRIGGER_LABELS[state.trigger] || state.trigger;
+        zone.innerHTML =
+            '<div class="canvas-card">' +
+            '<span class="canvas-card-name">' + escapeHtml(label) + "</span>" +
+            '<button class="canvas-card-remove" id="remove-trigger">&times;</button>' +
+            "</div>";
+
+        document.getElementById("remove-trigger").addEventListener("click", function () {
+            state.trigger = "";
+            renderTriggerCard();
+            updateYAMLPreview();
+        });
+    }
+
+    // --- YAML Preview ---
+
+    function updateYAMLPreview() {
+        const name = document.getElementById("agent-name").value.trim() || "my_agent";
+        const personality = document.getElementById("agent-personality").value.trim();
+        const schedule = state.trigger ? (TRIGGER_MAP[state.trigger] || null) : null;
+
+        let yaml = "";
+        yaml += "name: " + name + "\n";
+        yaml += 'description: "' + (personality ? personality.split("\n")[0].substring(0, 60) : "Custom agent built with PAGAL OS Builder") + '"\n';
+        yaml += "model: " + (state.model ? '"' + state.model + '"' : '""') + "\n";
+
+        yaml += "tools:\n";
+        if (state.tools.length > 0) {
+            state.tools.forEach(function (t) {
+                yaml += "  - " + t + "\n";
+            });
+        } else {
+            yaml += "  []\n";
+        }
+
+        yaml += 'personality: "' + escapeYamlString(personality || "") + '"\n';
+        yaml += "memory: false\n";
+        yaml += "schedule: " + (schedule ? '"' + schedule + '"' : "null") + "\n";
+        yaml += "limits:\n";
+        yaml += "  max_tool_calls: 30\n";
+        yaml += "  max_duration_seconds: 90\n";
+
+        document.getElementById("yaml-preview").textContent = yaml;
+    }
+
+    function escapeYamlString(s) {
+        return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
+    }
+
+    // Update preview on text input changes
+    document.getElementById("agent-name").addEventListener("input", updateYAMLPreview);
+    document.getElementById("agent-personality").addEventListener("input", updateYAMLPreview);
+
+    // --- Create Agent ---
+
+    document.getElementById("btn-create-agent").addEventListener("click", async function () {
+        const name = document.getElementById("agent-name").value.trim();
+        const personality = document.getElementById("agent-personality").value.trim();
+
+        if (!name) {
+            showResult("builder-result", "Please enter an agent name.", true);
+            return;
+        }
+        if (state.tools.length === 0) {
+            showResult("builder-result", "Please add at least one tool.", true);
+            return;
+        }
+        if (!state.model) {
+            showResult("builder-result", "Please select a model.", true);
+            return;
+        }
+
+        // Build a natural-language description for the creator API
+        const toolList = state.tools.join(", ");
+        const description =
+            "Create an agent named '" + name + "' " +
+            "with tools: " + toolList + ". " +
+            "Use model: " + state.model + ". " +
+            (personality ? "Personality: " + personality + ". " : "") +
+            (state.trigger && state.trigger !== "on_demand"
+                ? "Schedule: " + (TRIGGER_MAP[state.trigger] || "") + "."
+                : "");
+
+        const btn = document.getElementById("btn-create-agent");
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span>Creating...';
+        showResult("builder-result", "Creating agent... this may take a moment.");
+
+        try {
+            const resp = await fetch("/api/agents", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    description: description,
+                    model: state.model,
+                }),
+            });
+            const data = await resp.json();
+
+            btn.disabled = false;
+            btn.textContent = "Create Agent";
+
+            if (data.ok) {
+                showResult(
+                    "builder-result",
+                    'Agent "' + (data.name || name) + '" created successfully! Redirecting to dashboard...',
+                    false
+                );
+                setTimeout(function () {
+                    window.location.href = "/";
+                }, 2000);
+            } else {
+                showResult(
+                    "builder-result",
+                    "Error: " + (data.error || data.detail || "Failed to create agent"),
+                    true
+                );
+            }
+        } catch (err) {
+            btn.disabled = false;
+            btn.textContent = "Create Agent";
+            showResult("builder-result", "Network error: " + err.message, true);
+        }
+    });
+
+    // --- Clear All ---
+
+    document.getElementById("btn-clear-canvas").addEventListener("click", function () {
+        state.tools = [];
+        state.model = "";
+        state.trigger = "";
+        document.getElementById("agent-name").value = "";
+        document.getElementById("agent-personality").value = "";
+        renderToolCards();
+        renderModelCard();
+        renderTriggerCard();
+        updateYAMLPreview();
+        document.getElementById("builder-result").style.display = "none";
+    });
+
+    // --- Helpers ---
+
+    function escapeHtml(text) {
+        const div = document.createElement("div");
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // Initialize preview
+    updateYAMLPreview();
+})();
+</script>
+{% endblock %}
