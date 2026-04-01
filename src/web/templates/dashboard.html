@@ -48,6 +48,30 @@
         </div>
     {% endif %}
 </section>
+<!-- Pending Approvals -->
+<section class="approvals-section" style="margin-top:1.5rem;">
+    <div class="section-header">
+        <h2>Pending Approvals</h2>
+    </div>
+    <div id="approvals-container" class="card">
+        <table id="approvals-table" style="display:none; width:100%; border-collapse:collapse;">
+            <thead>
+                <tr>
+                    <th style="text-align:left; padding:0.5rem; border-bottom:1px solid var(--border);">ID</th>
+                    <th style="text-align:left; padding:0.5rem; border-bottom:1px solid var(--border);">Agent</th>
+                    <th style="text-align:left; padding:0.5rem; border-bottom:1px solid var(--border);">Tool</th>
+                    <th style="text-align:left; padding:0.5rem; border-bottom:1px solid var(--border);">Description</th>
+                    <th style="text-align:center; padding:0.5rem; border-bottom:1px solid var(--border);">Actions</th>
+                </tr>
+            </thead>
+            <tbody id="approvals-tbody"></tbody>
+        </table>
+        <div id="approvals-empty" style="text-align:center; padding:1rem;">
+            <p class="text-muted">No pending approvals.</p>
+        </div>
+    </div>
+</section>
+
 <!-- Process Manager -->
 <section class="processes-section" style="margin-top:1.5rem;">
     <div class="section-header">
@@ -416,16 +440,73 @@
         }
     }
 
-    // Load hands, teams, knowledge, processes, and memory on page load
+    // --- Pending Approvals Dashboard ---
+    async function loadApprovals() {
+        try {
+            const data = await apiCall('/api/approvals');
+            const table = document.getElementById('approvals-table');
+            const tbody = document.getElementById('approvals-tbody');
+            const empty = document.getElementById('approvals-empty');
+
+            if (data.ok && data.approvals && data.approvals.length > 0) {
+                table.style.display = 'table';
+                empty.style.display = 'none';
+                tbody.innerHTML = '';
+                for (const a of data.approvals) {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td style="padding:0.4rem; border-bottom:1px solid var(--border); font-family:monospace; font-size:0.85rem;">${escapeHtml(a.id)}</td>
+                        <td style="padding:0.4rem; border-bottom:1px solid var(--border);">${escapeHtml(a.agent)}</td>
+                        <td style="padding:0.4rem; border-bottom:1px solid var(--border);">${escapeHtml(a.tool)}</td>
+                        <td style="padding:0.4rem; border-bottom:1px solid var(--border);">${escapeHtml(a.description || '')}</td>
+                        <td style="padding:0.4rem; border-bottom:1px solid var(--border); text-align:center;">
+                            <button class="btn btn-primary btn-sm" onclick="approveAction('${escapeHtml(a.id)}')">Approve</button>
+                            <button class="btn btn-danger btn-sm" onclick="denyAction('${escapeHtml(a.id)}')">Deny</button>
+                        </td>
+                    `;
+                    tbody.appendChild(row);
+                }
+            } else {
+                table.style.display = 'none';
+                empty.style.display = 'block';
+            }
+        } catch (e) {
+            console.error('Failed to load approvals:', e);
+        }
+    }
+
+    async function approveAction(approvalId) {
+        const data = await apiCall(`/api/approvals/${encodeURIComponent(approvalId)}/approve`, { method: 'POST' });
+        if (data.ok) {
+            showResult('quick-result', `Approval "${approvalId}" granted.`, false);
+            loadApprovals();
+        } else {
+            showResult('quick-result', 'Error: ' + (data.detail || 'Failed to approve'), true);
+        }
+    }
+
+    async function denyAction(approvalId) {
+        const data = await apiCall(`/api/approvals/${encodeURIComponent(approvalId)}/deny`, { method: 'POST' });
+        if (data.ok) {
+            showResult('quick-result', `Approval "${approvalId}" denied.`, false);
+            loadApprovals();
+        } else {
+            showResult('quick-result', 'Error: ' + (data.detail || 'Failed to deny'), true);
+        }
+    }
+
+    // Load hands, teams, knowledge, processes, memory, and approvals on page load
     loadHands();
     loadTeams();
     loadKnowledgeStats();
     loadProcesses();
     loadMemoryStats();
+    loadApprovals();
 
-    // Refresh hands every 10 seconds, processes every 5
+    // Refresh hands every 10 seconds, processes every 5, approvals every 3
     setInterval(loadHands, 10000);
     setInterval(loadProcesses, 5000);
     setInterval(loadMemoryStats, 30000);
+    setInterval(loadApprovals, 3000);
 </script>
 {% endblock %}

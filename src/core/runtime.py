@@ -123,6 +123,24 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
     except Exception:
         memory_enabled = False
 
+    # --- Approval Gates: determine mode from agent YAML ---
+    approval_mode = "ask"  # default
+    try:
+        config = get_config()
+        agent_path = config.agents_dir / f"{agent.name}.yaml"
+        if agent_path.exists():
+            with open(agent_path, "r", encoding="utf-8") as _f:
+                _agent_yaml = yaml.safe_load(_f) or {}
+            approval_mode = _agent_yaml.get("approval_mode", "ask")
+    except Exception:
+        pass
+
+    try:
+        from src.core.approval import needs_approval, request_approval
+        approval_enabled = True
+    except Exception:
+        approval_enabled = False
+
     try:
         # --- Security: scan prompt injection on user task ---
         try:
@@ -283,6 +301,13 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
                     if pm_enabled:
                         update_process(process_pid, status="completed")
 
+                    # --- Analytics: record successful run ---
+                    _record_analytics(
+                        agent.name, task, True,
+                        time.time() - start_time, estimated_tokens,
+                        len(tools_used), "",
+                    )
+
                     return AgentResult(
                         ok=True,
                         output=result["content"],
@@ -326,6 +351,31 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
                         tool_args = {}
 
                     logger.info("Agent '%s' calling tool: %s(%s)", agent.name, tool_name, tool_args)
+
+                    # --- Approval Gate: check before executing risky tools ---
+                    if approval_enabled:
+                        try:
+                            if needs_approval(tool_name, tool_args, approval_mode):
+                                approved = request_approval(
+                                    agent.name, tool_name, tool_args, channel="cli",
+                                )
+                                if not approved:
+                                    logger.info(
+                                        "Tool '%s' denied by approval gate for agent '%s'",
+                                        tool_name, agent.name,
+                                    )
+                                    tool_result = {
+                                        "ok": False,
+                                        "error": f"Action '{tool_name}' denied by human approval gate",
+                                    }
+                                    messages.append({
+                                        "role": "tool",
+                                        "tool_call_id": tool_call.get("id", ""),
+                                        "content": json.dumps(tool_result),
+                                    })
+                                    continue
+                        except Exception as approval_err:
+                            logger.debug("Approval check failed: %s", approval_err)
 
                     # --- Security: sanitise tool inputs ---
                     if security_enabled:
@@ -389,6 +439,13 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
             # If we hit max loops, return what we have
             if pm_enabled:
                 update_process(process_pid, status="completed")
+
+            # --- Analytics: record max-loop run ---
+            _record_analytics(
+                agent.name, task, True,
+                time.time() - start_time, 0, len(tools_used), "",
+            )
+
             return AgentResult(
                 ok=True,
                 output=result.get("content", "Agent reached maximum loop count."),
@@ -411,6 +468,13 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
         logger.error("Agent '%s' crashed: %s", agent.name, e, exc_info=True)
         if pm_enabled:
             update_process(process_pid, status="error", error=str(e))
+
+        # --- Analytics: record crashed run ---
+        _record_analytics(
+            agent.name, task, False,
+            time.time() - start_time, 0, len(tools_used), str(e),
+        )
+
         return AgentResult(
             ok=False,
             output="",
@@ -585,3 +649,41 @@ def _save_run_knowledge(agent_name: str, task: str, output: str) -> None:
     except Exception as e:
         # Knowledge saving is best-effort — never block agent execution
         logger.debug("Failed to save run knowledge: %s", e)
+
+
+def _record_analytics(
+    agent_name: str,
+    task: str,
+    success: bool,
+    duration: float,
+    tokens: int,
+    tools: int,
+    error: str,
+) -> None:
+    """Record a completed agent run in the analytics database.
+
+    Best-effort — never blocks agent execution.
+
+    Args:
+        agent_name: Name of the agent.
+        task: The task description.
+        success: Whether the run succeeded.
+        duration: Duration in seconds.
+        tokens: Estimated tokens used.
+        tools: Number of tool calls.
+        error: Error message if failed.
+    """
+    try:
+        from src.core.analytics import record_run
+        record_run(
+            agent_name=agent_name,
+            task=task,
+            success=success,
+            duration=duration,
+            tokens=tokens,
+            tools=tools,
+            cost=0.0,  # Cost estimation can be refined later
+            error=error,
+        )
+    except Exception as e:
+        logger.debug("Failed to record analytics: %s", e)

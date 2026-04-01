@@ -38,6 +38,17 @@
 
 {% block scripts %}
 <script>
+    function renderStars(rating) {
+        const full = Math.floor(rating);
+        const half = rating - full >= 0.5 ? 1 : 0;
+        const empty = 5 - full - half;
+        let stars = '';
+        for (let i = 0; i < full; i++) stars += '<span style="color:#f5a623;">&#9733;</span>';
+        if (half) stars += '<span style="color:#f5a623;">&#9734;</span>';
+        for (let i = 0; i < empty; i++) stars += '<span style="color:#555;">&#9734;</span>';
+        return stars;
+    }
+
     function renderAgentCard(agent, container) {
         const card = document.createElement('div');
         card.className = 'agent-card card';
@@ -45,20 +56,31 @@
             `<span class="badge" style="font-size:0.75rem;">${escapeHtml(t)}</span>`
         ).join(' ');
 
+        const ratingVal = agent.rating || 0;
+        const reviewCount = (agent.reviews || []).length;
+        const installCount = agent.installs || agent.downloads || 0;
+
         card.innerHTML = `
             <div class="agent-header">
                 <h3>${escapeHtml(agent.name)}</h3>
             </div>
             <p class="agent-desc">${escapeHtml(agent.description)}</p>
+            <div style="margin-bottom:0.5rem;">
+                ${renderStars(ratingVal)}
+                <span style="font-size:0.85rem; color:var(--text-secondary); margin-left:0.35rem;">
+                    ${ratingVal > 0 ? ratingVal.toFixed(1) : 'No ratings'} (${reviewCount} reviews)
+                </span>
+            </div>
             <div class="agent-meta" style="margin-bottom:0.5rem;">
                 <span class="badge badge-status">by ${escapeHtml(agent.author || 'pagal-os')}</span>
-                <span class="badge">${agent.downloads || 0} installs</span>
+                <span class="badge">${installCount} installs</span>
             </div>
             <div style="margin-bottom:0.75rem; display:flex; flex-wrap:wrap; gap:0.25rem;">
                 ${toolsBadges}
             </div>
             <div class="agent-actions">
                 <button class="btn btn-primary btn-sm" onclick="installAgent('${escapeHtml(agent.id)}')">Install</button>
+                <button class="btn btn-secondary btn-sm" onclick="openRateForm('${escapeHtml(agent.id)}')">Rate</button>
             </div>
         `;
         container.appendChild(card);
@@ -152,6 +174,41 @@
             loadAllAgents();
         }
     });
+
+    async function openRateForm(agentId) {
+        const ratingStr = prompt(`Rate "${agentId}" (1-5 stars):`);
+        if (!ratingStr) return;
+        const rating = parseInt(ratingStr, 10);
+        if (isNaN(rating) || rating < 1 || rating > 5) {
+            alert('Rating must be between 1 and 5.');
+            return;
+        }
+        const review = prompt('Optional review (leave blank to skip):') || '';
+
+        const status = document.getElementById('store-status');
+        status.style.display = 'block';
+        status.textContent = `Rating "${agentId}"...`;
+        status.className = 'result-box';
+
+        try {
+            const data = await apiCall(`/api/marketplace/${encodeURIComponent(agentId)}/rate`, {
+                method: 'POST',
+                body: JSON.stringify({ rating: rating, review: review }),
+            });
+            if (data.ok) {
+                status.textContent = `Agent "${agentId}" rated ${rating} stars!`;
+                status.className = 'result-box result-success';
+                loadAllAgents();
+                loadFeatured();
+            } else {
+                status.textContent = 'Error: ' + (data.detail || data.error || 'Rating failed');
+                status.className = 'result-box result-error';
+            }
+        } catch (e) {
+            status.textContent = 'Error: ' + e.message;
+            status.className = 'result-box result-error';
+        }
+    }
 
     // Load on page init
     loadFeatured();

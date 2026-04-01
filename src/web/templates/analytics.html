@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}Analytics - PAGAL OS{% endblock %}
+{% block nav_analytics %}active{% endblock %}
+
+{% block content %}
+<section class="page-header">
+    <h1>Agent Analytics</h1>
+    <p>Track performance, success rates, and resource usage across all agents</p>
+</section>
+
+<!-- System-wide Stats -->
+<section class="card" style="margin-bottom:1.5rem;">
+    <h2 style="margin-bottom:1rem;">System Overview (Last 30 days)</h2>
+    <div style="display:flex; gap:2rem; flex-wrap:wrap; padding:0.5rem 0;">
+        <div style="text-align:center; min-width:100px;">
+            <div id="stat-runs" style="font-size:2rem; font-weight:bold; color:var(--accent);">-</div>
+            <div class="text-muted">Total Runs</div>
+        </div>
+        <div style="text-align:center; min-width:100px;">
+            <div id="stat-success" style="font-size:2rem; font-weight:bold; color:#4caf50;">-</div>
+            <div class="text-muted">Success Rate</div>
+        </div>
+        <div style="text-align:center; min-width:100px;">
+            <div id="stat-duration" style="font-size:2rem; font-weight:bold; color:var(--accent);">-</div>
+            <div class="text-muted">Avg Duration</div>
+        </div>
+        <div style="text-align:center; min-width:100px;">
+            <div id="stat-tokens" style="font-size:2rem; font-weight:bold; color:var(--accent);">-</div>
+            <div class="text-muted">Total Tokens</div>
+        </div>
+        <div style="text-align:center; min-width:100px;">
+            <div id="stat-tools" style="font-size:2rem; font-weight:bold; color:var(--accent);">-</div>
+            <div class="text-muted">Tool Calls</div>
+        </div>
+        <div style="text-align:center; min-width:100px;">
+            <div id="stat-cost" style="font-size:2rem; font-weight:bold; color:#f5a623;">-</div>
+            <div class="text-muted">Est. Cost</div>
+        </div>
+    </div>
+</section>
+
+<!-- Per-Agent Breakdown -->
+<section class="card" style="margin-bottom:1.5rem;">
+    <h2 style="margin-bottom:1rem;">Per-Agent Performance</h2>
+    <div id="agent-analytics-container">
+        <p class="text-muted" id="agent-analytics-loading">Loading analytics...</p>
+        <table id="agent-analytics-table" style="display:none; width:100%; border-collapse:collapse;">
+            <thead>
+                <tr>
+                    <th style="text-align:left; padding:0.5rem; border-bottom:1px solid var(--border);">Agent</th>
+                    <th style="text-align:center; padding:0.5rem; border-bottom:1px solid var(--border);">Runs</th>
+                    <th style="text-align:center; padding:0.5rem; border-bottom:1px solid var(--border);">Success Rate</th>
+                    <th style="text-align:center; padding:0.5rem; border-bottom:1px solid var(--border);">Avg Duration</th>
+                    <th style="text-align:center; padding:0.5rem; border-bottom:1px solid var(--border);">Tokens</th>
+                    <th style="text-align:center; padding:0.5rem; border-bottom:1px solid var(--border);">Cost</th>
+                </tr>
+            </thead>
+            <tbody id="agent-analytics-tbody"></tbody>
+        </table>
+        <div id="agent-analytics-empty" style="display:none; text-align:center; padding:2rem;">
+            <p class="text-muted">No analytics data yet. Run some agents to start tracking!</p>
+        </div>
+    </div>
+</section>
+
+<!-- Success Rate Bar Chart -->
+<section class="card" style="margin-bottom:1.5rem;">
+    <h2 style="margin-bottom:1rem;">Success Rate by Agent</h2>
+    <div id="success-chart" style="padding:0.5rem;">
+        <p class="text-muted">Loading chart...</p>
+    </div>
+</section>
+
+<!-- Runs Bar Chart -->
+<section class="card" style="margin-bottom:1.5rem;">
+    <h2 style="margin-bottom:1rem;">Runs by Agent</h2>
+    <div id="runs-chart" style="padding:0.5rem;">
+        <p class="text-muted">Loading chart...</p>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function renderBarChart(containerId, items, valueKey, maxValue, color, suffix) {
+        const container = document.getElementById(containerId);
+        if (!items || items.length === 0) {
+            container.innerHTML = '<p class="text-muted">No data available.</p>';
+            return;
+        }
+        const barMax = maxValue || Math.max(...items.map(i => i[valueKey] || 0), 1);
+        let html = '';
+        for (const item of items) {
+            const val = item[valueKey] || 0;
+            const pct = Math.min((val / barMax) * 100, 100);
+            html += `
+                <div style="display:flex; align-items:center; margin-bottom:0.5rem; gap:0.75rem;">
+                    <div style="width:140px; font-size:0.85rem; text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(item.agent_name)}</div>
+                    <div style="flex:1; background:var(--bg-secondary); border-radius:4px; height:22px; overflow:hidden;">
+                        <div style="width:${pct}%; height:100%; background:${color}; border-radius:4px; transition:width 0.5s;"></div>
+                    </div>
+                    <div style="width:70px; font-size:0.85rem; font-weight:bold;">${val}${suffix}</div>
+                </div>
+            `;
+        }
+        container.innerHTML = html;
+    }
+
+    async function loadAnalytics() {
+        try {
+            const data = await apiCall('/api/analytics?days=30');
+            const loading = document.getElementById('agent-analytics-loading');
+            if (loading) loading.style.display = 'none';
+
+            if (!data.ok) return;
+
+            // System stats
+            document.getElementById('stat-runs').textContent = data.total_runs || 0;
+            document.getElementById('stat-success').textContent = (data.success_rate || 0) + '%';
+            document.getElementById('stat-duration').textContent = (data.avg_duration || 0) + 's';
+            document.getElementById('stat-tokens').textContent = (data.total_tokens || 0).toLocaleString();
+            document.getElementById('stat-tools').textContent = (data.total_tools || 0).toLocaleString();
+            document.getElementById('stat-cost').textContent = '$' + (data.total_cost || 0).toFixed(4);
+
+            // Per-agent table
+            const agents = data.agents || [];
+            const table = document.getElementById('agent-analytics-table');
+            const tbody = document.getElementById('agent-analytics-tbody');
+            const empty = document.getElementById('agent-analytics-empty');
+
+            if (agents.length > 0) {
+                table.style.display = 'table';
+                empty.style.display = 'none';
+                tbody.innerHTML = '';
+                for (const a of agents) {
+                    const successColor = a.success_rate >= 80 ? '#4caf50' :
+                                        a.success_rate >= 50 ? '#f5a623' : '#e53935';
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td style="padding:0.5rem; border-bottom:1px solid var(--border); font-weight:500;">${escapeHtml(a.agent_name)}</td>
+                        <td style="padding:0.5rem; border-bottom:1px solid var(--border); text-align:center;">${a.runs}</td>
+                        <td style="padding:0.5rem; border-bottom:1px solid var(--border); text-align:center; color:${successColor}; font-weight:bold;">${a.success_rate}%</td>
+                        <td style="padding:0.5rem; border-bottom:1px solid var(--border); text-align:center;">${a.avg_duration}s</td>
+                        <td style="padding:0.5rem; border-bottom:1px solid var(--border); text-align:center;">${(a.tokens || 0).toLocaleString()}</td>
+                        <td style="padding:0.5rem; border-bottom:1px solid var(--border); text-align:center;">$${(a.cost || 0).toFixed(4)}</td>
+                    `;
+                    tbody.appendChild(row);
+                }
+
+                // Charts
+                renderBarChart('success-chart', agents, 'success_rate', 100, '#4caf50', '%');
+                renderBarChart('runs-chart', agents, 'runs', null, 'var(--accent)', '');
+            } else {
+                table.style.display = 'none';
+                empty.style.display = 'block';
+                document.getElementById('success-chart').innerHTML = '<p class="text-muted">No data available.</p>';
+                document.getElementById('runs-chart').innerHTML = '<p class="text-muted">No data available.</p>';
+            }
+        } catch (e) {
+            console.error('Failed to load analytics:', e);
+        }
+    }
+
+    loadAnalytics();
+    // Refresh every 30 seconds
+    setInterval(loadAnalytics, 30000);
+</script>
+{% endblock %}

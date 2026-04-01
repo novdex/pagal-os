@@ -56,6 +56,34 @@ class SettingsUpdate(BaseModel):
     ollama_url: str | None = None
 
 
+class RateAgentRequest(BaseModel):
+    """Request body for rating a marketplace agent."""
+
+    rating: int
+    review: str = ""
+
+
+class CloneAgentRequest(BaseModel):
+    """Request body for cloning an agent."""
+
+    new_name: str
+
+
+class ForkAgentRequest(BaseModel):
+    """Request body for forking an agent."""
+
+    new_name: str
+    changes: dict[str, Any] = {}
+
+
+class RegisterWebhookRequest(BaseModel):
+    """Request body for registering a webhook."""
+
+    agent_name: str
+    event_type: str = "http"
+    config: dict[str, Any] = {}
+
+
 class StartHandRequest(BaseModel):
     """Request body for starting a scheduled hand."""
 
@@ -842,6 +870,331 @@ async def api_usage_report(agent: str | None = None) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+# --- Marketplace Rating & Review Endpoints ---
+
+
+@router.post("/api/marketplace/{agent_id}/rate", tags=["marketplace"])
+async def api_rate_agent(agent_id: str, req: RateAgentRequest) -> dict[str, Any]:
+    """Rate a marketplace agent with 1-5 stars and optional review.
+
+    Args:
+        agent_id: Marketplace agent ID.
+        req: Request with rating (1-5) and optional review text.
+
+    Returns:
+        Dict with success status.
+    """
+    try:
+        from src.core.marketplace import rate_agent
+
+        if not 1 <= req.rating <= 5:
+            raise HTTPException(status_code=400, detail="Rating must be 1-5")
+        if rate_agent(agent_id, req.rating, req.review):
+            return {"ok": True, "message": f"Agent '{agent_id}' rated {req.rating} stars"}
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Rate agent error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/marketplace/{agent_id}/reviews", tags=["marketplace"])
+async def api_get_reviews(agent_id: str) -> dict[str, Any]:
+    """Get all reviews for a marketplace agent.
+
+    Args:
+        agent_id: Marketplace agent ID.
+
+    Returns:
+        Dict with list of review entries.
+    """
+    try:
+        from src.core.marketplace import get_reviews
+
+        reviews = get_reviews(agent_id)
+        return {"ok": True, "agent_id": agent_id, "reviews": reviews}
+    except Exception as e:
+        logger.error("Get reviews error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/marketplace/top-rated", tags=["marketplace"])
+async def api_top_rated(limit: int = 10) -> dict[str, Any]:
+    """Get top-rated agents from the marketplace.
+
+    Args:
+        limit: Max number of agents to return.
+
+    Returns:
+        Dict with list of top-rated agent entries.
+    """
+    try:
+        from src.core.marketplace import get_top_rated
+
+        agents = get_top_rated(limit)
+        return {"ok": True, "agents": agents}
+    except Exception as e:
+        logger.error("Top rated error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Approval Gate Endpoints ---
+
+
+@router.get("/api/approvals", tags=["approvals"])
+async def api_get_approvals() -> dict[str, Any]:
+    """List all pending approval requests.
+
+    Returns:
+        Dict with list of pending approval entries.
+    """
+    try:
+        from src.core.approval import get_pending_approvals
+
+        approvals = get_pending_approvals()
+        return {"ok": True, "approvals": approvals}
+    except Exception as e:
+        logger.error("Get approvals error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/approvals/{approval_id}/approve", tags=["approvals"])
+async def api_approve_action(approval_id: str) -> dict[str, Any]:
+    """Approve a pending action.
+
+    Args:
+        approval_id: The approval request ID.
+
+    Returns:
+        Dict with success status.
+    """
+    try:
+        from src.core.approval import approve
+
+        if approve(approval_id):
+            return {"ok": True, "message": f"Approval {approval_id} granted"}
+        raise HTTPException(status_code=404, detail=f"Approval '{approval_id}' not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Approve error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/approvals/{approval_id}/deny", tags=["approvals"])
+async def api_deny_action(approval_id: str) -> dict[str, Any]:
+    """Deny a pending action.
+
+    Args:
+        approval_id: The approval request ID.
+
+    Returns:
+        Dict with success status.
+    """
+    try:
+        from src.core.approval import deny
+
+        if deny(approval_id):
+            return {"ok": True, "message": f"Approval {approval_id} denied"}
+        raise HTTPException(status_code=404, detail=f"Approval '{approval_id}' not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Deny error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Cloning & Forking Endpoints ---
+
+
+@router.post("/api/agents/{name}/clone", tags=["agents"])
+async def api_clone_agent(name: str, req: CloneAgentRequest) -> dict[str, Any]:
+    """Clone an agent to create an exact copy.
+
+    Args:
+        name: Source agent name.
+        req: Request with new_name.
+
+    Returns:
+        Dict with success status.
+    """
+    try:
+        from src.core.cloning import clone_agent
+
+        if clone_agent(name, req.new_name):
+            return {"ok": True, "message": f"Agent '{name}' cloned to '{req.new_name}'"}
+        raise HTTPException(status_code=400, detail=f"Failed to clone '{name}'")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Clone error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/agents/{name}/fork", tags=["agents"])
+async def api_fork_agent(name: str, req: ForkAgentRequest) -> dict[str, Any]:
+    """Fork an agent with modifications.
+
+    Args:
+        name: Source agent name.
+        req: Request with new_name and changes dict.
+
+    Returns:
+        Dict with success status.
+    """
+    try:
+        from src.core.cloning import fork_agent
+
+        if fork_agent(name, req.new_name, req.changes):
+            return {"ok": True, "message": f"Agent '{name}' forked to '{req.new_name}'"}
+        raise HTTPException(status_code=400, detail=f"Failed to fork '{name}'")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Fork error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Analytics Endpoints ---
+
+
+@router.get("/api/analytics", tags=["analytics"])
+async def api_all_analytics(days: int = 30) -> dict[str, Any]:
+    """Get system-wide analytics.
+
+    Args:
+        days: Number of days to look back.
+
+    Returns:
+        Dict with total runs, success rate, tokens, cost, and per-agent breakdown.
+    """
+    try:
+        from src.core.analytics import get_all_analytics
+
+        return {"ok": True, **get_all_analytics(days)}
+    except Exception as e:
+        logger.error("Analytics error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/analytics/{agent_name}", tags=["analytics"])
+async def api_agent_analytics(agent_name: str, days: int = 30) -> dict[str, Any]:
+    """Get analytics for a specific agent.
+
+    Args:
+        agent_name: Agent name.
+        days: Number of days to look back.
+
+    Returns:
+        Dict with agent-specific analytics.
+    """
+    try:
+        from src.core.analytics import get_agent_analytics
+
+        return {"ok": True, **get_agent_analytics(agent_name, days)}
+    except Exception as e:
+        logger.error("Agent analytics error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Webhook Endpoints ---
+
+
+@router.post("/webhooks/{webhook_id}", tags=["webhooks"])
+async def api_receive_webhook(webhook_id: str, request: Request) -> dict[str, Any]:
+    """Receive an external webhook and trigger the associated agent.
+
+    Args:
+        webhook_id: The registered webhook ID.
+        request: The incoming HTTP request with POST payload.
+
+    Returns:
+        Dict with agent execution result.
+    """
+    try:
+        from src.core.webhooks import handle_webhook
+
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+
+        result = handle_webhook(webhook_id, payload)
+        if not result.get("ok"):
+            status_code = 404 if "not found" in result.get("error", "").lower() else 500
+            raise HTTPException(status_code=status_code, detail=result.get("error"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Webhook receive error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/webhooks", tags=["webhooks"])
+async def api_list_webhooks() -> dict[str, Any]:
+    """List all registered webhooks.
+
+    Returns:
+        Dict with list of webhook entries.
+    """
+    try:
+        from src.core.webhooks import list_webhooks
+
+        return {"ok": True, "webhooks": list_webhooks()}
+    except Exception as e:
+        logger.error("List webhooks error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/webhooks", tags=["webhooks"])
+async def api_register_webhook(req: RegisterWebhookRequest) -> dict[str, Any]:
+    """Register a new webhook trigger.
+
+    Args:
+        req: Request with agent_name, event_type, and optional config.
+
+    Returns:
+        Dict with webhook URL.
+    """
+    try:
+        from src.core.webhooks import register_webhook
+
+        url = register_webhook(req.agent_name, req.event_type, req.config)
+        if url:
+            return {"ok": True, "url": url}
+        raise HTTPException(status_code=500, detail="Failed to register webhook")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Register webhook error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.delete("/api/webhooks/{webhook_id}", tags=["webhooks"])
+async def api_delete_webhook(webhook_id: str) -> dict[str, Any]:
+    """Delete a registered webhook.
+
+    Args:
+        webhook_id: The webhook to remove.
+
+    Returns:
+        Dict with success status.
+    """
+    try:
+        from src.core.webhooks import delete_webhook
+
+        if delete_webhook(webhook_id):
+            return {"ok": True, "message": f"Webhook '{webhook_id}' deleted"}
+        raise HTTPException(status_code=404, detail=f"Webhook '{webhook_id}' not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Delete webhook error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 # --- Web Page Routes ---
 
 
@@ -910,6 +1263,19 @@ async def page_builder(request: Request) -> HTMLResponse:
         Rendered HTML builder page.
     """
     return templates.TemplateResponse(request, "builder.html")
+
+
+@router.get("/analytics", response_class=HTMLResponse, tags=["web"])
+async def page_analytics(request: Request) -> HTMLResponse:
+    """Serve the analytics page.
+
+    Args:
+        request: FastAPI request object.
+
+    Returns:
+        Rendered HTML analytics page.
+    """
+    return templates.TemplateResponse(request, "analytics.html")
 
 
 @router.get("/settings", response_class=HTMLResponse, tags=["web"])

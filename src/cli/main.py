@@ -480,6 +480,181 @@ def cmd_memory_stats(args: argparse.Namespace) -> None:
 # --- Telegram Command ---
 
 
+# --- Clone / Fork / Diff Commands ---
+
+
+def cmd_clone(args: argparse.Namespace) -> None:
+    """Handle the 'clone' command — clone an existing agent.
+
+    Args:
+        args: Parsed CLI arguments with 'source' and 'new_name' fields.
+    """
+    from src.core.cloning import clone_agent
+
+    if clone_agent(args.source, args.new_name):
+        print(f"Agent '{args.source}' cloned to '{args.new_name}'!")
+        print(f"Run it with: python pagal.py run {args.new_name} \"your task here\"")
+    else:
+        print(f"Failed to clone agent '{args.source}'.", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_fork(args: argparse.Namespace) -> None:
+    """Handle the 'fork' command — fork an agent with modifications.
+
+    Args:
+        args: Parsed CLI arguments with 'source', 'new_name', and optional modifiers.
+    """
+    from src.core.cloning import fork_agent
+
+    changes: dict = {}
+    if hasattr(args, "model") and args.model:
+        changes["model"] = args.model
+    if hasattr(args, "personality") and args.personality:
+        changes["personality"] = args.personality
+    if hasattr(args, "add_tools") and args.add_tools:
+        changes["add_tools"] = [t.strip() for t in args.add_tools.split(",") if t.strip()]
+    if hasattr(args, "remove_tools") and args.remove_tools:
+        changes["remove_tools"] = [t.strip() for t in args.remove_tools.split(",") if t.strip()]
+
+    if fork_agent(args.source, args.new_name, changes):
+        print(f"Agent '{args.source}' forked to '{args.new_name}'!")
+        if changes:
+            print(f"Changes applied: {', '.join(changes.keys())}")
+    else:
+        print(f"Failed to fork agent '{args.source}'.", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_diff(args: argparse.Namespace) -> None:
+    """Handle the 'diff' command — compare two agents.
+
+    Args:
+        args: Parsed CLI arguments with 'agent_a' and 'agent_b' fields.
+    """
+    from src.core.cloning import diff_agents
+
+    result = diff_agents(args.agent_a, args.agent_b)
+    if not result.get("ok"):
+        print(f"Error: {result.get('error', 'unknown error')}", file=sys.stderr)
+        sys.exit(1)
+
+    if result.get("identical"):
+        print(f"Agents '{args.agent_a}' and '{args.agent_b}' are identical (excluding metadata).")
+    else:
+        print(f"Differences between '{args.agent_a}' and '{args.agent_b}':")
+        print("-" * 60)
+        for d in result.get("differences", []):
+            print(f"  {d['field']}:")
+            print(f"    {args.agent_a}: {d['value_a']}")
+            print(f"    {args.agent_b}: {d['value_b']}")
+
+
+# --- Webhook Commands ---
+
+
+def cmd_webhook_create(args: argparse.Namespace) -> None:
+    """Handle 'webhook create' — register a new webhook trigger.
+
+    Args:
+        args: Parsed CLI arguments with 'agent' and 'event' fields.
+    """
+    from src.core.webhooks import register_webhook
+
+    url = register_webhook(args.agent, args.event)
+    if url:
+        print(f"Webhook created for agent '{args.agent}'!")
+        print(f"  URL: {url}")
+        print(f"  Event type: {args.event}")
+        print(f"\nSend a POST request to the URL to trigger the agent.")
+    else:
+        print("Failed to create webhook.", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_webhook_list(_args: argparse.Namespace) -> None:
+    """Handle 'webhook list' — list all registered webhooks.
+
+    Args:
+        _args: Parsed CLI arguments (unused).
+    """
+    from src.core.webhooks import list_webhooks
+
+    webhooks = list_webhooks()
+    if not webhooks:
+        print("No webhooks registered.")
+        print("Create one with: python pagal.py webhook create <agent> --event http")
+        return
+
+    print(f"{'ID':<10} {'Agent':<20} {'Event':<10} {'Triggers':<10} {'URL'}")
+    print("-" * 90)
+    for wh in webhooks:
+        print(
+            f"{wh['id']:<10} {wh['agent_name']:<20} {wh['event_type']:<10} "
+            f"{wh['trigger_count']:<10} {wh['url']}"
+        )
+
+
+def cmd_webhook_delete(args: argparse.Namespace) -> None:
+    """Handle 'webhook delete' — remove a webhook.
+
+    Args:
+        args: Parsed CLI arguments with 'webhook_id' field.
+    """
+    from src.core.webhooks import delete_webhook
+
+    if delete_webhook(args.webhook_id):
+        print(f"Webhook '{args.webhook_id}' deleted.")
+    else:
+        print(f"Webhook '{args.webhook_id}' not found.", file=sys.stderr)
+        sys.exit(1)
+
+
+# --- Analytics Commands ---
+
+
+def cmd_analytics(args: argparse.Namespace) -> None:
+    """Handle the 'analytics' command — show agent analytics.
+
+    Args:
+        args: Parsed CLI arguments with optional 'agent' field.
+    """
+    if hasattr(args, "agent") and args.agent:
+        from src.core.analytics import get_agent_analytics
+
+        stats = get_agent_analytics(args.agent, days=30)
+        print(f"Analytics for '{args.agent}' (last 30 days):")
+        print(f"  Total runs:    {stats['total_runs']}")
+        print(f"  Success rate:  {stats['success_rate']}%")
+        print(f"  Avg duration:  {stats['avg_duration']}s")
+        print(f"  Total tokens:  {stats['total_tokens']}")
+        print(f"  Total cost:    ${stats['total_cost']:.4f}")
+        print(f"  Runs/day:      {stats['runs_per_day']}")
+    else:
+        from src.core.analytics import get_all_analytics
+
+        stats = get_all_analytics(days=30)
+        print("System-wide Analytics (last 30 days):")
+        print(f"  Total runs:    {stats['total_runs']}")
+        print(f"  Success rate:  {stats['success_rate']}%")
+        print(f"  Avg duration:  {stats['avg_duration']}s")
+        print(f"  Total tokens:  {stats['total_tokens']}")
+        print(f"  Total cost:    ${stats['total_cost']:.4f}")
+        if stats.get("agents"):
+            print(f"\n  Per-Agent Breakdown:")
+            print(f"  {'Agent':<20} {'Runs':<8} {'Success':<10} {'Tokens':<10} {'Cost'}")
+            print("  " + "-" * 60)
+            for a in stats["agents"]:
+                print(
+                    f"  {a['agent_name']:<20} {a['runs']:<8} "
+                    f"{a['success_rate']}%{'':<6} {a['tokens']:<10} "
+                    f"${a['cost']:.4f}"
+                )
+
+
+# --- Telegram Command ---
+
+
 def cmd_telegram(_args: argparse.Namespace) -> None:
     """Handle 'telegram' — start the Telegram bot.
 
@@ -615,6 +790,43 @@ def main() -> None:
     # pagal team list
     team_sub.add_parser("list", help="List all teams")
 
+    # --- Clone / Fork / Diff commands ---
+    clone_p = subparsers.add_parser("clone", help="Clone an existing agent")
+    clone_p.add_argument("source", help="Source agent name")
+    clone_p.add_argument("new_name", help="Name for the cloned agent")
+
+    fork_p = subparsers.add_parser("fork", help="Fork an agent with modifications")
+    fork_p.add_argument("source", help="Source agent name")
+    fork_p.add_argument("new_name", help="Name for the forked agent")
+    fork_p.add_argument("--model", default=None, help="New model to use")
+    fork_p.add_argument("--personality", default=None, help="New personality")
+    fork_p.add_argument("--add-tools", default=None, help="Comma-separated tools to add")
+    fork_p.add_argument("--remove-tools", default=None, help="Comma-separated tools to remove")
+
+    diff_p = subparsers.add_parser("diff", help="Show differences between two agents")
+    diff_p.add_argument("agent_a", help="First agent name")
+    diff_p.add_argument("agent_b", help="Second agent name")
+
+    # --- Webhook commands ---
+    webhook_p = subparsers.add_parser("webhook", help="Manage webhook triggers")
+    webhook_sub = webhook_p.add_subparsers(dest="webhook_command", help="Webhook sub-commands")
+
+    # pagal webhook create <agent> --event http
+    webhook_create_p = webhook_sub.add_parser("create", help="Register a new webhook")
+    webhook_create_p.add_argument("agent", help="Agent name to trigger")
+    webhook_create_p.add_argument("--event", default="http", help='Event type: "http", "github", "email", "custom"')
+
+    # pagal webhook list
+    webhook_sub.add_parser("list", help="List all webhooks")
+
+    # pagal webhook delete <id>
+    webhook_delete_p = webhook_sub.add_parser("delete", help="Delete a webhook")
+    webhook_delete_p.add_argument("webhook_id", help="Webhook ID to delete")
+
+    # --- Analytics command ---
+    analytics_p = subparsers.add_parser("analytics", help="View agent analytics")
+    analytics_p.add_argument("--agent", default=None, help="Specific agent (omit for system-wide)")
+
     # --- Telegram command ---
     subparsers.add_parser("telegram", help="Start the Telegram bot")
 
@@ -711,6 +923,20 @@ def main() -> None:
             memory_p.print_help()
         return
 
+    # Route webhook sub-commands
+    if args.command == "webhook":
+        webhook_commands = {
+            "create": cmd_webhook_create,
+            "list": cmd_webhook_list,
+            "delete": cmd_webhook_delete,
+        }
+        handler = webhook_commands.get(args.webhook_command)
+        if handler:
+            handler(args)
+        else:
+            webhook_p.print_help()
+        return
+
     commands = {
         "create": cmd_create,
         "run": cmd_run,
@@ -721,6 +947,10 @@ def main() -> None:
         "telegram": cmd_telegram,
         "ps": cmd_ps,
         "kill": cmd_kill,
+        "clone": cmd_clone,
+        "fork": cmd_fork,
+        "diff": cmd_diff,
+        "analytics": cmd_analytics,
     }
 
     handler = commands.get(args.command)

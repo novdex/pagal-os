@@ -1,11 +1,13 @@
 """Agent Marketplace — discover, install, and share agent configurations.
 
 Community agents stored in a local JSON registry (MVP) that can later
-connect to a remote GitHub-backed registry.
+connect to a remote GitHub-backed registry. Includes rating/review system
+and install tracking.
 """
 
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +33,9 @@ _DEFAULT_REGISTRY: list[dict[str, Any]] = [
         "tools": ["search_web", "browse_url"],
         "yaml_url": "local",
         "featured": True,
+        "rating": 0.0,
+        "reviews": [],
+        "installs": 0,
     },
     {
         "id": "code_reviewer",
@@ -41,6 +46,9 @@ _DEFAULT_REGISTRY: list[dict[str, Any]] = [
         "tools": ["read_file", "run_shell"],
         "yaml_url": "local",
         "featured": True,
+        "rating": 0.0,
+        "reviews": [],
+        "installs": 0,
     },
     {
         "id": "email_drafter",
@@ -51,6 +59,9 @@ _DEFAULT_REGISTRY: list[dict[str, Any]] = [
         "tools": [],
         "yaml_url": "local",
         "featured": False,
+        "rating": 0.0,
+        "reviews": [],
+        "installs": 0,
     },
     {
         "id": "data_analyst",
@@ -61,6 +72,9 @@ _DEFAULT_REGISTRY: list[dict[str, Any]] = [
         "tools": ["read_file", "write_file", "run_shell"],
         "yaml_url": "local",
         "featured": True,
+        "rating": 0.0,
+        "reviews": [],
+        "installs": 0,
     },
     {
         "id": "social_media",
@@ -71,6 +85,9 @@ _DEFAULT_REGISTRY: list[dict[str, Any]] = [
         "tools": ["search_web"],
         "yaml_url": "local",
         "featured": False,
+        "rating": 0.0,
+        "reviews": [],
+        "installs": 0,
     },
     {
         "id": "meeting_notes",
@@ -81,6 +98,9 @@ _DEFAULT_REGISTRY: list[dict[str, Any]] = [
         "tools": ["read_file", "write_file"],
         "yaml_url": "local",
         "featured": False,
+        "rating": 0.0,
+        "reviews": [],
+        "installs": 0,
     },
     {
         "id": "competitor_tracker",
@@ -91,6 +111,9 @@ _DEFAULT_REGISTRY: list[dict[str, Any]] = [
         "tools": ["search_web", "browse_url"],
         "yaml_url": "local",
         "featured": False,
+        "rating": 0.0,
+        "reviews": [],
+        "installs": 0,
     },
     {
         "id": "bug_hunter",
@@ -101,6 +124,9 @@ _DEFAULT_REGISTRY: list[dict[str, Any]] = [
         "tools": ["read_file", "run_shell"],
         "yaml_url": "local",
         "featured": True,
+        "rating": 0.0,
+        "reviews": [],
+        "installs": 0,
     },
     {
         "id": "tutor",
@@ -111,6 +137,9 @@ _DEFAULT_REGISTRY: list[dict[str, Any]] = [
         "tools": ["search_web"],
         "yaml_url": "local",
         "featured": True,
+        "rating": 0.0,
+        "reviews": [],
+        "installs": 0,
     },
     {
         "id": "daily_briefing",
@@ -121,6 +150,9 @@ _DEFAULT_REGISTRY: list[dict[str, Any]] = [
         "tools": ["search_web", "browse_url"],
         "yaml_url": "local",
         "featured": False,
+        "rating": 0.0,
+        "reviews": [],
+        "installs": 0,
     },
 ]
 
@@ -265,10 +297,11 @@ def install_agent(agent_id: str) -> bool:
             )
             return False
 
-        # Increment download counter
+        # Increment download and install counters
         for item in registry:
             if item["id"] == agent_id:
                 item["downloads"] = item.get("downloads", 0) + 1
+                item["installs"] = item.get("installs", 0) + 1
                 break
         _save_registry(registry)
 
@@ -362,3 +395,128 @@ def get_featured() -> list[dict[str, Any]]:
     except Exception as e:
         logger.error("Failed to get featured agents: %s", e)
         return []
+
+
+# --- Rating & Review System ---
+
+
+def rate_agent(agent_id: str, rating: int, review: str = "") -> bool:
+    """Rate an agent 1-5 stars with an optional text review.
+
+    Appends the review to the agent's reviews list and recalculates
+    the average rating.
+
+    Args:
+        agent_id: Marketplace agent ID.
+        rating: Star rating from 1 to 5.
+        review: Optional review text.
+
+    Returns:
+        True if the rating was saved, False otherwise.
+    """
+    try:
+        if not 1 <= rating <= 5:
+            logger.warning("Invalid rating %d for agent '%s' (must be 1-5)", rating, agent_id)
+            return False
+
+        registry = _load_registry()
+
+        for entry in registry:
+            if entry["id"] == agent_id:
+                # Ensure reviews list exists
+                if "reviews" not in entry or not isinstance(entry["reviews"], list):
+                    entry["reviews"] = []
+
+                entry["reviews"].append({
+                    "rating": rating,
+                    "review": review,
+                    "date": time.strftime("%Y-%m-%d %H:%M:%S"),
+                })
+
+                # Recalculate average rating
+                all_ratings = [r["rating"] for r in entry["reviews"]]
+                entry["rating"] = round(sum(all_ratings) / len(all_ratings), 1)
+
+                _save_registry(registry)
+                logger.info("Agent '%s' rated %d stars", agent_id, rating)
+                return True
+
+        logger.warning("Agent '%s' not found in marketplace", agent_id)
+        return False
+
+    except Exception as e:
+        logger.error("Failed to rate agent '%s': %s", agent_id, e)
+        return False
+
+
+def get_reviews(agent_id: str) -> list[dict[str, Any]]:
+    """Get all reviews for an agent.
+
+    Args:
+        agent_id: Marketplace agent ID.
+
+    Returns:
+        List of review dicts, each with "rating", "review", and "date".
+    """
+    try:
+        registry = _load_registry()
+
+        for entry in registry:
+            if entry["id"] == agent_id:
+                return entry.get("reviews", [])
+
+        logger.warning("Agent '%s' not found for reviews", agent_id)
+        return []
+
+    except Exception as e:
+        logger.error("Failed to get reviews for '%s': %s", agent_id, e)
+        return []
+
+
+def get_top_rated(limit: int = 10) -> list[dict[str, Any]]:
+    """Get agents sorted by average rating (highest first).
+
+    Only includes agents that have at least one review.
+
+    Args:
+        limit: Maximum number of agents to return.
+
+    Returns:
+        List of agent dicts sorted by rating descending.
+    """
+    try:
+        registry = _load_registry()
+        rated = [
+            e for e in registry
+            if e.get("rating", 0) > 0 and len(e.get("reviews", [])) > 0
+        ]
+        rated.sort(key=lambda x: x.get("rating", 0), reverse=True)
+        return rated[:limit]
+
+    except Exception as e:
+        logger.error("Failed to get top rated agents: %s", e)
+        return []
+
+
+def increment_installs(agent_id: str) -> None:
+    """Increment the install counter for an agent.
+
+    Called when an agent is installed from the marketplace.
+
+    Args:
+        agent_id: Marketplace agent ID.
+    """
+    try:
+        registry = _load_registry()
+
+        for entry in registry:
+            if entry["id"] == agent_id:
+                entry["installs"] = entry.get("installs", 0) + 1
+                _save_registry(registry)
+                logger.debug("Incremented installs for '%s'", agent_id)
+                return
+
+        logger.warning("Agent '%s' not found for install increment", agent_id)
+
+    except Exception as e:
+        logger.error("Failed to increment installs for '%s': %s", agent_id, e)
