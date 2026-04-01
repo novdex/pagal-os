@@ -30,10 +30,23 @@ def _db_path() -> Path:
 def _get_conn() -> sqlite3.Connection:
     """Open a connection and ensure the agent_goals table exists.
 
+    Delegates to the central database module when available, falling
+    back to a local connection if not.
+
     Returns:
         sqlite3.Connection with agent_goals table ready.
     """
-    conn = sqlite3.connect(str(_db_path()))
+    _default = Path.home() / ".pagal-os" / "pagal.db"
+    db = _db_path()
+    conn = None
+    if db == _default:
+        try:
+            from src.core.database import get_connection
+            conn = get_connection()
+        except Exception:
+            pass
+    if conn is None:
+        conn = sqlite3.connect(str(db))
     conn.execute("""
         CREATE TABLE IF NOT EXISTS agent_goals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

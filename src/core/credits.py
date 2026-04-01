@@ -31,6 +31,9 @@ CREDIT_COSTS: dict[str, float] = {
 def _get_conn() -> sqlite3.Connection:
     """Get a SQLite connection to the credits database.
 
+    Note: credits use a separate database file (credits.db) for
+    isolation. This is intentional.
+
     Returns:
         sqlite3.Connection with row_factory set to sqlite3.Row.
     """

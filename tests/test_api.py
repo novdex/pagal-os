@@ -42,8 +42,8 @@ class TestAPIAgents:
         assert data["ok"] is True
         assert "status" in data
 
-    @patch("src.api.routes.run_in_sandbox")
-    @patch("src.api.routes.load_agent")
+    @patch("src.api.routes.agents.run_in_sandbox")
+    @patch("src.api.routes.agents.load_agent")
     def test_run_agent(self, mock_load: MagicMock, mock_sandbox: MagicMock) -> None:
         """POST /api/agents/{name}/run should execute the agent."""
         from src.core.runtime import AgentConfig, AgentResult

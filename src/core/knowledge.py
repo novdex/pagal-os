@@ -11,16 +11,27 @@ from typing import Any
 
 logger = logging.getLogger("pagal_os")
 
-# Database path
+# Database path (kept for backward compatibility)
 _DB_PATH = Path.home() / ".pagal-os" / "pagal.db"
 
 
 def _get_connection() -> sqlite3.Connection:
     """Open (or create) the SQLite database and return a connection.
 
+    Delegates to the central database module when available, falling
+    back to a local connection if not. Uses the local path when
+    ``_DB_PATH`` has been overridden (e.g. in tests).
+
     Returns:
         Active sqlite3.Connection with row_factory set to Row.
     """
+    _default = Path.home() / ".pagal-os" / "pagal.db"
+    if _DB_PATH == _default:
+        try:
+            from src.core.database import get_connection
+            return get_connection()
+        except Exception:
+            pass
     _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(_DB_PATH))
     conn.row_factory = sqlite3.Row

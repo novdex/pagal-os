@@ -13,16 +13,27 @@ from typing import Any
 
 logger = logging.getLogger("pagal_os")
 
-# Database path inside the PAGAL OS storage directory
+# Database path inside the PAGAL OS storage directory (kept for backward compatibility)
 _DB_PATH: Path = Path.home() / ".pagal-os" / "pagal.db"
 
 
 def _get_connection() -> sqlite3.Connection:
     """Get a SQLite connection with WAL mode for concurrent reads.
 
+    Delegates to the central database module when available, falling
+    back to a local connection if not. Uses the local path when
+    ``_DB_PATH`` has been overridden (e.g. in tests).
+
     Returns:
         An open sqlite3.Connection with row_factory set to sqlite3.Row.
     """
+    _default = Path.home() / ".pagal-os" / "pagal.db"
+    if _DB_PATH == _default:
+        try:
+            from src.core.database import get_connection
+            return get_connection()
+        except Exception:
+            pass
     _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(_DB_PATH), timeout=10)
     conn.row_factory = sqlite3.Row

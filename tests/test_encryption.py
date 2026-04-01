@@ -1,10 +1,11 @@
-"""Tests for PAGAL OS encryption module."""
+"""Tests for PAGAL OS encryption module (Fernet-based)."""
 
 import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from cryptography.fernet import Fernet
 
 # Ensure project root is on path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -16,8 +17,8 @@ from src.core import encryption as enc_module
 def isolate_encryption(tmp_path: Path):
     """Redirect the encryption key file to a temp directory for each test."""
     test_key_file = tmp_path / ".encryption_key"
-    # Write a known test key
-    test_key = "TestPassword1234567890abcdefgh!!"
+    # Write a valid Fernet key
+    test_key = Fernet.generate_key().decode()
     test_key_file.write_text(test_key, encoding="utf-8")
 
     with patch.object(enc_module, "KEY_FILE", test_key_file):
@@ -60,29 +61,33 @@ class TestEncryptDecryptRoundTrip:
         decrypted = enc_module.decrypt_data(encrypted)
         assert decrypted == plaintext
 
+    def test_encrypt_with_explicit_key(self) -> None:
+        """Should encrypt/decrypt with an explicitly provided key."""
+        key = Fernet.generate_key().decode()
+        plaintext = "explicit key test"
+        encrypted = enc_module.encrypt_data(plaintext, key=key)
+        decrypted = enc_module.decrypt_data(encrypted, key=key)
+        assert decrypted == plaintext
+
 
 class TestWrongPassword:
     """Test behavior with wrong decryption password."""
 
     def test_wrong_password_fails(self, tmp_path: Path) -> None:
-        """Decrypting with a different key should produce garbage or error."""
+        """Decrypting with a different key should raise an error."""
         # Encrypt with the current key
         plaintext = "Super secret data"
         encrypted = enc_module.encrypt_data(plaintext)
 
-        # Change the key
+        # Change the key to a different valid Fernet key
         wrong_key_file = tmp_path / ".wrong_key"
-        wrong_key_file.write_text("WrongPassword1234567890abcdefgh!!", encoding="utf-8")
+        wrong_key = Fernet.generate_key().decode()
+        wrong_key_file.write_text(wrong_key, encoding="utf-8")
 
         with patch.object(enc_module, "KEY_FILE", wrong_key_file):
-            # Decrypting should either error or produce different text
-            try:
-                decrypted = enc_module.decrypt_data(encrypted)
-                # If it doesn't raise, the result should be different (garbled)
-                assert decrypted != plaintext
-            except Exception:
-                # An exception is also acceptable — wrong key should fail
-                pass
+            # Fernet should raise InvalidToken with the wrong key
+            with pytest.raises(Exception):
+                enc_module.decrypt_data(encrypted)
 
 
 class TestIsEncrypted:
@@ -118,3 +123,21 @@ class TestIsEncrypted:
         # Decrypt should return original content
         decrypted = enc_module.decrypt_file(str(test_file))
         assert decrypted == "secret content here"
+
+
+class TestGenerateKey:
+    """Test Fernet key generation."""
+
+    def test_generate_key_creates_valid_fernet_key(self, tmp_path: Path) -> None:
+        """Generated key should be a valid Fernet key."""
+        key_file = tmp_path / ".new_key"
+        with patch.object(enc_module, "KEY_FILE", key_file):
+            key = enc_module.generate_key()
+            # Should not raise — valid Fernet key
+            Fernet(key.encode())
+
+    def test_generate_key_idempotent(self) -> None:
+        """Calling generate_key twice should return the same key."""
+        key1 = enc_module.generate_key()
+        key2 = enc_module.generate_key()
+        assert key1 == key2

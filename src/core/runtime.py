@@ -388,9 +388,19 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
                         error=result["error"],
                     )
 
-                # Track token usage (estimate based on content length)
-                content_len = len(result.get("content", "") or "")
-                estimated_tokens = max(content_len // 4, 50)
+                # Track token usage — count input and output separately
+                from src.core.budget import estimate_tokens as _est_tokens
+
+                # Input tokens: sum of all message content sent to the LLM
+                _input_tok = sum(
+                    _est_tokens(m.get("content", "") or "")
+                    for m in messages
+                )
+                # Output tokens: the response content
+                _output_content = result.get("content", "") or ""
+                _output_tok = _est_tokens(_output_content)
+                estimated_tokens = _input_tok + _output_tok
+
                 if tracking_enabled:
                     track_usage(agent.name, tokens=estimated_tokens)
                 if pm_enabled:
@@ -400,7 +410,10 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
                 if budget_enabled:
                     try:
                         from src.core.budget import check_budget as _recheck, track_cost
-                        track_cost(agent.name, estimated_tokens, agent.model)
+                        track_cost(
+                            agent.name, estimated_tokens, agent.model,
+                            input_tokens=_input_tok, output_tokens=_output_tok,
+                        )
                         _budget = _recheck(agent.name)
                         if not _budget["ok"]:
                             logger.warning("Agent '%s' stopped: budget exceeded mid-run", agent.name)

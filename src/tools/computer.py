@@ -145,11 +145,11 @@ def type_text(text: str) -> dict[str, Any]:
         return {"ok": False, "error": f"Type text failed: {e}"}
 
 
-def hotkey(*keys: str) -> dict[str, Any]:
-    """Press a keyboard shortcut (e.g. hotkey("ctrl", "c")).
+def hotkey(keys: list[str]) -> dict[str, Any]:
+    """Press a keyboard shortcut (e.g. hotkey(["ctrl", "c"])).
 
     Args:
-        *keys: Key names to press simultaneously.
+        keys: List of key names to press simultaneously.
 
     Returns:
         Dict with 'ok' and 'keys' pressed.

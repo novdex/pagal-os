@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from src.api.routes import router
+from src.api.routes import router  # noqa: E402 — routes package (__init__.py)
 from src.core.config import get_config
 
 logger = logging.getLogger("pagal_os")
@@ -28,6 +28,13 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         application: The FastAPI application instance.
     """
     import src.tools  # noqa: F401
+
+    # Initialise all database tables on startup
+    try:
+        from src.core.database import init_all_tables
+        init_all_tables()
+    except Exception as e:
+        logger.warning("Database init skipped: %s", e)
 
     config = get_config()
 

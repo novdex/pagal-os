@@ -24,6 +24,9 @@ DB_PATH = Path.home() / ".pagal-os" / "traces.db"
 def _get_db() -> sqlite3.Connection:
     """Open (or create) the traces database and return a connection.
 
+    Note: traces use a separate database file (traces.db) to avoid
+    contention with the main pagal.db. This is intentional.
+
     Returns:
         sqlite3 Connection with row_factory set to Row.
     """

@@ -6,15 +6,33 @@ An operating system that creates, runs, and manages AI agents from YAML configs.
 
 ### 1. Install dependencies
 
+**Linux / macOS (Bash):**
+
 ```bash
+cd ~/projects/pagal-os
+pip install -r requirements.txt
+```
+
+**Windows (PowerShell):**
+
+```powershell
 cd C:\projects\pagal-os
 pip install -r requirements.txt
 ```
 
 ### 2. Configure API key
 
+**Linux / macOS:**
+
 ```bash
-copy .env.example .env
+cp .env.example .env
+# Edit .env and add your OpenRouter API key
+```
+
+**Windows (PowerShell):**
+
+```powershell
+Copy-Item .env.example .env
 # Edit .env and add your OpenRouter API key
 ```
 
@@ -54,9 +72,29 @@ Then open [http://localhost:3000](http://localhost:3000) in your browser.
 ## Architecture
 
 - **Agents** are YAML configs stored in `~/.pagal-os/agents/`
+  - On Windows: `C:\Users\<username>\.pagal-os\agents\`
 - **Runtime** loads configs and runs agents in isolated threads
 - **Tools** are pluggable (search, files, shell, browser)
 - **LLM** supports OpenRouter (cloud) and Ollama (local)
+
+## Storage Paths
+
+All PAGAL OS data lives under a single directory:
+
+| Platform | Path |
+|----------|------|
+| Linux / macOS | `~/.pagal-os/` |
+| Windows | `C:\Users\<username>\.pagal-os\` |
+
+Sub-directories:
+
+| Directory | Purpose |
+|-----------|---------|
+| `agents/` | Agent YAML configuration files |
+| `memory/` | Persistent agent memory |
+| `backups/` | System backups |
+| `screenshots/` | Computer-use screenshots |
+| `logs/` | Agent execution logs |
 
 ## Built-in Tools
 
@@ -87,6 +125,7 @@ pagal-os/
 │   │   ├── llm.py        # LLM provider (OpenRouter/Ollama)
 │   │   ├── runtime.py    # Agent runtime kernel
 │   │   ├── sandbox.py    # Isolation wrapper
+│   │   ├── database.py   # SQLite connection manager
 │   │   └── creator.py    # Natural language agent creator
 │   ├── tools/
 │   │   ├── registry.py   # Tool plugin system
@@ -96,7 +135,7 @@ pagal-os/
 │   │   └── browser.py    # URL browser tool
 │   ├── api/
 │   │   ├── server.py     # FastAPI app
-│   │   └── routes.py     # API + web routes
+│   │   └── routes/       # API + web route modules
 │   ├── cli/
 │   │   └── main.py       # CLI commands
 │   └── web/

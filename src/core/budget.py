@@ -55,10 +55,23 @@ def _db_path() -> Path:
 def _get_conn() -> sqlite3.Connection:
     """Open a connection to the budget database and ensure the table exists.
 
+    Delegates to the central database module when available, falling
+    back to a local connection if not.
+
     Returns:
         sqlite3.Connection with budget_tracking table ready.
     """
-    conn = sqlite3.connect(str(_db_path()))
+    _default = Path.home() / ".pagal-os" / "pagal.db"
+    db = _db_path()
+    conn = None
+    if db == _default:
+        try:
+            from src.core.database import get_connection
+            conn = get_connection()
+        except Exception:
+            pass
+    if conn is None:
+        conn = sqlite3.connect(str(db))
     conn.execute("""
         CREATE TABLE IF NOT EXISTS budget_tracking (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,6 +84,41 @@ def _get_conn() -> sqlite3.Connection:
     """)
     conn.commit()
     return conn
+
+
+def estimate_tokens(text: str) -> int:
+    """Estimate token count from text. ~4 chars per token for English text.
+
+    Args:
+        text: The text to estimate tokens for.
+
+    Returns:
+        Estimated token count (minimum 1).
+    """
+    return max(1, len(text) // 4)
+
+
+def calculate_cost(tokens: int, model: str) -> float:
+    """Calculate cost based on model pricing.
+
+    Matches the model identifier against MODEL_COSTS keys as prefixes,
+    falling back to the 'default' rate.
+
+    Args:
+        tokens: Number of tokens.
+        model: Full model identifier string.
+
+    Returns:
+        Cost in USD for the given token count.
+    """
+    cost_per_million = MODEL_COSTS.get(model, MODEL_COSTS["default"])
+    for prefix, cost in MODEL_COSTS.items():
+        if prefix == "default":
+            continue
+        if model.startswith(prefix):
+            cost_per_million = cost
+            break
+    return (tokens / 1_000_000) * cost_per_million
 
 
 def _cost_for_model(model: str) -> float:
@@ -122,23 +170,35 @@ def get_budget(agent_name: str) -> BudgetConfig:
     return BudgetConfig()
 
 
-def track_cost(agent_name: str, tokens: int, model: str) -> float:
+def track_cost(
+    agent_name: str,
+    tokens: int,
+    model: str,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+) -> float:
     """Estimate and record cost for an LLM call.
 
     Calculates cost based on token count and model pricing, then inserts
-    or updates the budget_tracking row for today.
+    or updates the budget_tracking row for today. If input_tokens and
+    output_tokens are provided, their sum is used instead of ``tokens``.
 
     Args:
         agent_name: Name of the agent incurring the cost.
-        tokens: Number of tokens used in this call.
+        tokens: Total number of tokens (fallback if input/output not provided).
         model: Model identifier used for the call.
+        input_tokens: Token count for the prompt/input.
+        output_tokens: Token count for the response/output.
 
     Returns:
         The estimated cost in USD for this call.
     """
     try:
-        cost_per_million = _cost_for_model(model)
-        cost_usd = (tokens / 1_000_000) * cost_per_million
+        # Prefer explicit input+output counts when available
+        if input_tokens > 0 or output_tokens > 0:
+            tokens = input_tokens + output_tokens
+
+        cost_usd = calculate_cost(tokens, model)
         today = datetime.now().strftime("%Y-%m-%d")
 
         conn = _get_conn()
