@@ -958,6 +958,353 @@ def cmd_telegram(_args: argparse.Namespace) -> None:
     start_telegram_bot(bot_token, default_agent)
 
 
+# --- Budget Commands ---
+
+
+def cmd_budget(args: argparse.Namespace) -> None:
+    """Handle 'budget' command -- show budget status for an agent or all agents.
+
+    Args:
+        args: Parsed CLI arguments with optional 'agent' and '--all' fields.
+    """
+    from src.core.budget import check_budget, get_spending_report
+    from src.core.runtime import list_agents
+
+    if hasattr(args, "all") and args.all:
+        # Show all agents
+        agents = list_agents()
+        if not agents:
+            print("No agents found.")
+            return
+
+        print(f"{'Agent':<25} {'Daily Spent':<15} {'Daily Limit':<15} {'Monthly Spent':<15} {'Status'}")
+        print("-" * 90)
+        for a in agents:
+            status = check_budget(a["name"])
+            ok_str = "OK" if status["ok"] else "OVER LIMIT"
+            print(
+                f"{a['name']:<25} ${status['daily_spent']:<14.4f} "
+                f"${status['daily_limit']:<14.2f} ${status['monthly_spent']:<14.4f} "
+                f"{ok_str}"
+            )
+    elif hasattr(args, "agent") and args.agent:
+        status = check_budget(args.agent)
+        print(f"Budget for '{args.agent}':")
+        print(f"  Status:          {'OK' if status['ok'] else 'OVER LIMIT'}")
+        print(f"  Daily spent:     ${status['daily_spent']:.4f} / ${status['daily_limit']:.2f}")
+        print(f"  Monthly spent:   ${status['monthly_spent']:.4f} / ${status['monthly_limit']:.2f}")
+        print(f"  Remaining today: ${status['remaining_today']:.4f}")
+
+        report = get_spending_report(args.agent, days=7)
+        if report["daily"]:
+            print(f"\n  Last 7 days:")
+            for d in report["daily"][:7]:
+                print(f"    {d['date']}: ${d['cost_usd']:.4f} ({d['tokens']} tokens, {d['llm_calls']} calls)")
+    else:
+        # Default: show all
+        report = get_spending_report(days=30)
+        print(f"System Budget Report (last 30 days):")
+        print(f"  Total cost:   ${report['total_cost']:.4f}")
+        print(f"  Total tokens: {report['total_tokens']}")
+        print(f"  Total calls:  {report['total_calls']}")
+        if report["agents"]:
+            print(f"\n  Per-Agent:")
+            for name, data in report["agents"].items():
+                print(f"    {name}: ${data['total_cost']:.4f} ({data['total_tokens']} tokens)")
+
+
+# --- Workflow Commands ---
+
+
+def cmd_workflow_create(args: argparse.Namespace) -> None:
+    """Handle 'workflow create' -- create a workflow from natural language.
+
+    Args:
+        args: Parsed CLI arguments with 'description' field.
+    """
+    from src.core.workflows import Workflow, create_workflow_from_description, save_workflow
+
+    print(f"Creating workflow from: {args.description}")
+    result = create_workflow_from_description(args.description)
+
+    if result["ok"]:
+        wf_data = result["workflow"]
+        workflow = Workflow(
+            name=wf_data["name"],
+            trigger=wf_data["trigger"],
+            steps=wf_data["steps"],
+            description=wf_data["description"],
+        )
+        save_workflow(workflow)
+        print(f"Workflow '{workflow.name}' created!")
+        print(f"  Trigger: {workflow.trigger}")
+        print(f"  Steps:")
+        for i, s in enumerate(workflow.steps, 1):
+            print(f"    {i}. [{s.get('agent', '?')}] {s.get('task', '')}")
+        print(f"\nRun it with: python pagal.py workflow run {workflow.name}")
+    else:
+        print(f"Error: {result.get('message', 'unknown')}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_workflow_run(args: argparse.Namespace) -> None:
+    """Handle 'workflow run' -- execute a saved workflow.
+
+    Args:
+        args: Parsed CLI arguments with 'name' field.
+    """
+    from src.core.workflows import load_workflow, run_workflow
+
+    try:
+        workflow = load_workflow(args.name)
+    except FileNotFoundError:
+        print(f"Workflow '{args.name}' not found.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Running workflow '{args.name}' ({len(workflow.steps)} steps)...")
+    print("-" * 60)
+
+    result = run_workflow(workflow)
+
+    for step_result in result.get("results", []):
+        status = "OK" if step_result["ok"] else "FAILED"
+        print(f"  [{status}] Step {step_result['step']}: [{step_result['agent']}] {step_result['task'][:50]}")
+        if step_result.get("error"):
+            print(f"         Error: {step_result['error']}")
+
+    if result["ok"]:
+        print(f"\nFinal output:\n{result.get('final_output', '')[:500]}")
+    else:
+        print(f"\nWorkflow failed.", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_workflow_list(_args: argparse.Namespace) -> None:
+    """Handle 'workflow list' -- list all saved workflows.
+
+    Args:
+        _args: Parsed CLI arguments (unused).
+    """
+    from src.core.workflows import list_workflows
+
+    workflows = list_workflows()
+    if not workflows:
+        print("No workflows found.")
+        print("Create one with: python pagal.py workflow create \"when I say research, search AI news\"")
+        return
+
+    print(f"{'Name':<25} {'Trigger':<20} {'Steps':<8} {'Description'}")
+    print("-" * 80)
+    for wf in workflows:
+        print(f"{wf['name']:<25} {wf['trigger']:<20} {wf['steps_count']:<8} {wf['description'][:30]}")
+
+
+# --- Goal Commands ---
+
+
+def cmd_goal_set(args: argparse.Namespace) -> None:
+    """Handle 'goal set' -- set a long-term goal for an agent.
+
+    Args:
+        args: Parsed CLI arguments with 'agent' and 'goal' fields.
+    """
+    from src.core.goals import get_goal_status, set_goal
+
+    print(f"Setting goal for '{args.agent}': {args.goal}")
+    try:
+        goal_id = set_goal(args.agent, args.goal)
+        status = get_goal_status(goal_id)
+        print(f"Goal #{goal_id} created!")
+        if status.get("ok"):
+            sub_tasks = status.get("sub_tasks", [])
+            print(f"  Sub-tasks ({len(sub_tasks)}):")
+            for i, st in enumerate(sub_tasks, 1):
+                print(f"    {i}. {st}")
+        print(f"\nTrack progress: python pagal.py goal status {goal_id}")
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_goal_status(args: argparse.Namespace) -> None:
+    """Handle 'goal status' -- show status of a specific goal.
+
+    Args:
+        args: Parsed CLI arguments with 'goal_id' field.
+    """
+    from src.core.goals import get_goal_status
+
+    status = get_goal_status(int(args.goal_id))
+    if not status.get("ok"):
+        print(f"Error: {status.get('error', 'unknown')}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Goal #{status['id']}: {status['goal']}")
+    print(f"  Agent:    {status['agent_name']}")
+    print(f"  Status:   {status['status']}")
+    print(f"  Progress: {status['progress_pct']}%")
+    print(f"  Created:  {status['created_at']}")
+    print(f"  Last work: {status.get('last_worked_at', 'never')}")
+
+    completed = status.get("completed_tasks", [])
+    remaining = status.get("remaining_tasks", [])
+
+    if completed:
+        print(f"\n  Completed ({len(completed)}):")
+        for t in completed:
+            print(f"    [x] {t}")
+    if remaining:
+        print(f"\n  Remaining ({len(remaining)}):")
+        for t in remaining:
+            print(f"    [ ] {t}")
+
+
+def cmd_goal_list(args: argparse.Namespace) -> None:
+    """Handle 'goal list' -- list all goals.
+
+    Args:
+        args: Parsed CLI arguments with optional 'agent' field.
+    """
+    from src.core.goals import list_goals
+
+    agent = args.agent if hasattr(args, "agent") and args.agent else None
+    goals = list_goals(agent)
+
+    if not goals:
+        print("No goals found.")
+        print("Set one with: python pagal.py goal set <agent> \"your goal\"")
+        return
+
+    print(f"{'ID':<6} {'Agent':<20} {'Status':<12} {'Progress':<10} {'Goal'}")
+    print("-" * 80)
+    for g in goals:
+        print(
+            f"{g['id']:<6} {g['agent_name']:<20} {g['status']:<12} "
+            f"{g['progress_pct']}%{'':<7} {g['goal'][:35]}"
+        )
+
+
+# --- Debug Commands ---
+
+
+def cmd_debug(args: argparse.Namespace) -> None:
+    """Handle 'debug' command -- interactive terminal debugger.
+
+    Args:
+        args: Parsed CLI arguments with 'agent' and 'task' fields.
+    """
+    from src.core.debugger import (
+        continue_debug,
+        get_debug_log,
+        inspect,
+        modify_context,
+        set_breakpoint,
+        start_debug_session,
+        step,
+    )
+
+    print(f"Starting debug session for '{args.agent}'...")
+    print(f"Task: {args.task}")
+    print("-" * 60)
+
+    try:
+        session_id = start_debug_session(args.agent, args.task)
+    except FileNotFoundError:
+        print(f"Agent '{args.agent}' not found.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Session: {session_id}")
+    print("Commands: (s)tep, (c)ontinue, (i)nspect, (b)reakpoint <type>, (m)odify <msg>, (q)uit")
+    print("-" * 60)
+
+    while True:
+        try:
+            cmd = input("\ndebug> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nDebug session ended.")
+            break
+
+        if not cmd:
+            continue
+
+        if cmd in ("q", "quit", "exit"):
+            print("Debug session ended.")
+            break
+        elif cmd in ("s", "step"):
+            result = step(session_id)
+            _print_debug_result(result)
+            if result.get("state", {}).get("status") == "done":
+                print("\nAgent finished!")
+                break
+        elif cmd in ("c", "continue"):
+            result = continue_debug(session_id)
+            _print_debug_result(result)
+            if result.get("state", {}).get("status") == "done":
+                print("\nAgent finished!")
+                break
+        elif cmd in ("i", "inspect"):
+            result = inspect(session_id)
+            if result.get("ok"):
+                print(f"  Status:      {result['status']}")
+                print(f"  Step:        {result['current_step']}")
+                print(f"  Messages:    {len(result['messages'])}")
+                print(f"  Pending:     {len(result['pending_tool_calls'])} tool calls")
+                print(f"  Tools used:  {', '.join(result['tools_used']) or 'none'}")
+                print(f"  Breakpoints: {', '.join(result['breakpoints']) or 'none'}")
+        elif cmd.startswith(("b ", "breakpoint ")):
+            bp_type = cmd.split(maxsplit=1)[1] if " " in cmd else ""
+            if bp_type:
+                set_breakpoint(session_id, bp_type)
+                print(f"  Breakpoint set on: {bp_type}")
+            else:
+                print("  Usage: b <tool_call|llm_call|error|tool_name>")
+        elif cmd.startswith(("m ", "modify ")):
+            msg = cmd.split(maxsplit=1)[1] if " " in cmd else ""
+            if msg:
+                modify_context(session_id, msg)
+                print(f"  Message injected.")
+            else:
+                print("  Usage: m <message>")
+        else:
+            print("  Unknown command. Use: s, c, i, b <type>, m <msg>, q")
+
+
+def _print_debug_result(result: dict) -> None:
+    """Pretty-print a debug step result.
+
+    Args:
+        result: The result dict from a debug step/continue call.
+    """
+    if not result.get("ok"):
+        print(f"  ERROR: {result.get('error', 'unknown')}")
+        return
+
+    step_type = result.get("type", "?")
+
+    if step_type == "llm_call":
+        content = result.get("content", "")
+        print(f"  [LLM] {content[:200]}")
+        pending = result.get("pending_tool_calls", [])
+        if pending:
+            print(f"  Pending tools: {', '.join(pending)}")
+
+    elif step_type == "tool_call":
+        tool_name = result.get("tool_name", "?")
+        tool_result = str(result.get("tool_result", ""))[:200]
+        print(f"  [TOOL] {tool_name}")
+        print(f"  Result: {tool_result}")
+
+    elif step_type == "final_response":
+        print(f"  [DONE] {result.get('content', '')[:300]}")
+
+    elif step_type == "continue":
+        print(f"  {result.get('content', '')}")
+
+    state = result.get("state", {})
+    if state:
+        print(f"  (step={state.get('current_step', '?')}, status={state.get('status', '?')})")
+
+
 def cmd_doctor(_args: argparse.Namespace) -> None:
     """Handle the 'doctor' command -- run system health check.
 
@@ -1147,6 +1494,48 @@ def main() -> None:
     trace_p = subparsers.add_parser("trace", help="View detailed trace events for a run")
     trace_p.add_argument("run_id", help="Run ID to view")
 
+    # --- Budget commands ---
+    budget_p = subparsers.add_parser("budget", help="View agent budget and spending")
+    budget_p.add_argument("agent", nargs="?", default=None, help="Agent name (optional)")
+    budget_p.add_argument("--all", action="store_true", help="Show all agents' budgets")
+
+    # --- Workflow commands ---
+    workflow_p = subparsers.add_parser("workflow", help="Natural language workflow automation")
+    workflow_sub = workflow_p.add_subparsers(dest="workflow_command", help="Workflow sub-commands")
+
+    # pagal workflow create "when I say research, search AI news and save to file"
+    workflow_create_p = workflow_sub.add_parser("create", help="Create a workflow from description")
+    workflow_create_p.add_argument("description", help="Natural language workflow description")
+
+    # pagal workflow run <name>
+    workflow_run_p = workflow_sub.add_parser("run", help="Run a saved workflow")
+    workflow_run_p.add_argument("name", help="Workflow name")
+
+    # pagal workflow list
+    workflow_sub.add_parser("list", help="List all saved workflows")
+
+    # --- Goal commands ---
+    goal_p = subparsers.add_parser("goal", help="Autonomous long-term goal pursuit")
+    goal_sub = goal_p.add_subparsers(dest="goal_command", help="Goal sub-commands")
+
+    # pagal goal set <agent> "grow my Twitter to 10K"
+    goal_set_p = goal_sub.add_parser("set", help="Set a long-term goal for an agent")
+    goal_set_p.add_argument("agent", help="Agent name")
+    goal_set_p.add_argument("goal", help="Goal description")
+
+    # pagal goal status <goal_id>
+    goal_status_p = goal_sub.add_parser("status", help="Check goal progress")
+    goal_status_p.add_argument("goal_id", help="Goal ID number")
+
+    # pagal goal list [--agent <name>]
+    goal_list_p = goal_sub.add_parser("list", help="List all goals")
+    goal_list_p.add_argument("--agent", default=None, help="Filter by agent name")
+
+    # --- Debug command ---
+    debug_p = subparsers.add_parser("debug", help="Step-through agent debugger")
+    debug_p.add_argument("agent", help="Agent name to debug")
+    debug_p.add_argument("task", help="Task for the agent")
+
     # --- Memory commands ---
     memory_p = subparsers.add_parser("memory", help="Cross-session memory management")
     memory_sub = memory_p.add_subparsers(dest="memory_command", help="Memory sub-commands")
@@ -1234,6 +1623,34 @@ def main() -> None:
             memory_p.print_help()
         return
 
+    # Route workflow sub-commands
+    if args.command == "workflow":
+        workflow_commands = {
+            "create": cmd_workflow_create,
+            "run": cmd_workflow_run,
+            "list": cmd_workflow_list,
+        }
+        handler = workflow_commands.get(args.workflow_command)
+        if handler:
+            handler(args)
+        else:
+            workflow_p.print_help()
+        return
+
+    # Route goal sub-commands
+    if args.command == "goal":
+        goal_commands = {
+            "set": cmd_goal_set,
+            "status": cmd_goal_status,
+            "list": cmd_goal_list,
+        }
+        handler = goal_commands.get(args.goal_command)
+        if handler:
+            handler(args)
+        else:
+            goal_p.print_help()
+        return
+
     # Route webhook sub-commands
     if args.command == "webhook":
         webhook_commands = {
@@ -1271,6 +1688,8 @@ def main() -> None:
         "traces": cmd_traces,
         "trace": cmd_trace_detail,
         "doctor": cmd_doctor,
+        "budget": cmd_budget,
+        "debug": cmd_debug,
     }
 
     handler = commands.get(args.command)

@@ -111,6 +111,44 @@ class StartHandRequest(BaseModel):
     task: str
 
 
+class CreateWorkflowRequest(BaseModel):
+    """Request body for creating a workflow from description."""
+
+    description: str
+
+
+class RunWorkflowRequest(BaseModel):
+    """Request body for running a workflow."""
+
+    input_data: str = ""
+
+
+class SetGoalRequest(BaseModel):
+    """Request body for setting a goal."""
+
+    agent_name: str
+    goal: str
+
+
+class StartDebugRequest(BaseModel):
+    """Request body for starting a debug session."""
+
+    agent_name: str
+    task: str
+
+
+class SetBreakpointRequest(BaseModel):
+    """Request body for setting a breakpoint."""
+
+    on: str
+
+
+class ModifyContextRequest(BaseModel):
+    """Request body for injecting a message into a debug session."""
+
+    message: str
+
+
 class CreateTeamRequest(BaseModel):
     """Request body for creating a team."""
 
@@ -1520,6 +1558,412 @@ async def api_trace_summary(run_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+# --- Budget API Endpoints ---
+
+
+@router.get("/api/budget", tags=["budget"])
+async def api_budget_all() -> dict[str, Any]:
+    """Get budget status for all agents.
+
+    Returns:
+        Dict with spending report.
+    """
+    try:
+        from src.core.budget import get_spending_report
+        return {"ok": True, **get_spending_report()}
+    except Exception as e:
+        logger.error("Budget report error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/budget/{agent_name}", tags=["budget"])
+async def api_budget_agent(agent_name: str) -> dict[str, Any]:
+    """Get budget status for a specific agent.
+
+    Args:
+        agent_name: Agent name.
+
+    Returns:
+        Dict with budget check results.
+    """
+    try:
+        from src.core.budget import check_budget
+        return {"ok": True, **check_budget(agent_name)}
+    except Exception as e:
+        logger.error("Budget check error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Model Routing API Endpoints ---
+
+
+@router.get("/api/routing/stats", tags=["routing"])
+async def api_routing_stats() -> dict[str, Any]:
+    """Get model routing statistics.
+
+    Returns:
+        Dict with routing tier counts and model assignments.
+    """
+    try:
+        from src.core.model_router import get_routing_stats
+        return {"ok": True, **get_routing_stats()}
+    except Exception as e:
+        logger.error("Routing stats error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Workflow API Endpoints ---
+
+
+@router.post("/api/workflows", tags=["workflows"])
+async def api_create_workflow(req: CreateWorkflowRequest) -> dict[str, Any]:
+    """Create a workflow from a natural language description.
+
+    Args:
+        req: Request with description.
+
+    Returns:
+        Dict with workflow definition.
+    """
+    try:
+        from src.core.workflows import Workflow, create_workflow_from_description, save_workflow
+
+        result = create_workflow_from_description(req.description)
+        if not result["ok"]:
+            raise HTTPException(status_code=400, detail=result.get("message", "Failed"))
+
+        # Save to disk
+        wf_data = result["workflow"]
+        workflow = Workflow(
+            name=wf_data["name"],
+            trigger=wf_data["trigger"],
+            steps=wf_data["steps"],
+            description=wf_data["description"],
+        )
+        save_workflow(workflow)
+
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Create workflow error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/workflows", tags=["workflows"])
+async def api_list_workflows() -> dict[str, Any]:
+    """List all saved workflows.
+
+    Returns:
+        Dict with list of workflow summaries.
+    """
+    try:
+        from src.core.workflows import list_workflows
+        return {"ok": True, "workflows": list_workflows()}
+    except Exception as e:
+        logger.error("List workflows error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/workflows/{name}/run", tags=["workflows"])
+async def api_run_workflow(name: str, req: RunWorkflowRequest) -> dict[str, Any]:
+    """Run a saved workflow.
+
+    Args:
+        name: Workflow name.
+        req: Request with optional input_data.
+
+    Returns:
+        Dict with workflow execution results.
+    """
+    try:
+        from src.core.workflows import load_workflow, run_workflow
+
+        workflow = load_workflow(name)
+        result = run_workflow(workflow, req.input_data)
+        return result
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Workflow '{name}' not found")
+    except Exception as e:
+        logger.error("Run workflow error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Goals API Endpoints ---
+
+
+@router.post("/api/goals", tags=["goals"])
+async def api_set_goal(req: SetGoalRequest) -> dict[str, Any]:
+    """Set a long-term goal for an agent.
+
+    Args:
+        req: Request with agent_name and goal.
+
+    Returns:
+        Dict with goal_id and status.
+    """
+    try:
+        from src.core.goals import get_goal_status, set_goal
+
+        goal_id = set_goal(req.agent_name, req.goal)
+        status = get_goal_status(goal_id)
+        return {"ok": True, "goal_id": goal_id, **status}
+    except Exception as e:
+        logger.error("Set goal error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/goals", tags=["goals"])
+async def api_list_goals(agent: str | None = None) -> dict[str, Any]:
+    """List all goals, optionally filtered by agent.
+
+    Args:
+        agent: Optional agent name filter.
+
+    Returns:
+        Dict with list of goal summaries.
+    """
+    try:
+        from src.core.goals import list_goals
+        return {"ok": True, "goals": list_goals(agent)}
+    except Exception as e:
+        logger.error("List goals error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/goals/{goal_id}", tags=["goals"])
+async def api_goal_status(goal_id: int) -> dict[str, Any]:
+    """Get status and progress of a specific goal.
+
+    Args:
+        goal_id: The goal ID.
+
+    Returns:
+        Dict with goal details and progress.
+    """
+    try:
+        from src.core.goals import get_goal_status
+        result = get_goal_status(goal_id)
+        if not result.get("ok"):
+            raise HTTPException(status_code=404, detail=result.get("error", "Not found"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Goal status error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/goals/{goal_id}/work", tags=["goals"])
+async def api_work_on_goal(goal_id: int) -> dict[str, Any]:
+    """Work on the next sub-task of a goal.
+
+    Args:
+        goal_id: The goal ID.
+
+    Returns:
+        Dict with work result and updated progress.
+    """
+    try:
+        from src.core.goals import work_on_goal
+        return work_on_goal(goal_id)
+    except Exception as e:
+        logger.error("Work on goal error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/goals/{goal_id}/pause", tags=["goals"])
+async def api_pause_goal(goal_id: int) -> dict[str, Any]:
+    """Pause an active goal.
+
+    Args:
+        goal_id: The goal ID.
+
+    Returns:
+        Dict with success status.
+    """
+    try:
+        from src.core.goals import pause_goal
+        if pause_goal(goal_id):
+            return {"ok": True, "message": f"Goal #{goal_id} paused"}
+        raise HTTPException(status_code=404, detail=f"Goal #{goal_id} not found or not active")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Pause goal error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/goals/{goal_id}/resume", tags=["goals"])
+async def api_resume_goal(goal_id: int) -> dict[str, Any]:
+    """Resume a paused goal.
+
+    Args:
+        goal_id: The goal ID.
+
+    Returns:
+        Dict with success status.
+    """
+    try:
+        from src.core.goals import resume_goal
+        if resume_goal(goal_id):
+            return {"ok": True, "message": f"Goal #{goal_id} resumed"}
+        raise HTTPException(status_code=404, detail=f"Goal #{goal_id} not found or not paused")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Resume goal error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# --- Debug API Endpoints ---
+
+
+@router.post("/api/debug/start", tags=["debugger"])
+async def api_debug_start(req: StartDebugRequest) -> dict[str, Any]:
+    """Start a new debug session for an agent.
+
+    Args:
+        req: Request with agent_name and task.
+
+    Returns:
+        Dict with session_id.
+    """
+    try:
+        from src.core.debugger import start_debug_session
+        session_id = start_debug_session(req.agent_name, req.task)
+        return {"ok": True, "session_id": session_id}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Agent '{req.agent_name}' not found")
+    except Exception as e:
+        logger.error("Debug start error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/debug/{session_id}/step", tags=["debugger"])
+async def api_debug_step(session_id: str) -> dict[str, Any]:
+    """Execute one step in a debug session.
+
+    Args:
+        session_id: The debug session ID.
+
+    Returns:
+        Dict with step result and state.
+    """
+    try:
+        from src.core.debugger import step
+        return step(session_id)
+    except Exception as e:
+        logger.error("Debug step error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/debug/{session_id}/inspect", tags=["debugger"])
+async def api_debug_inspect(session_id: str) -> dict[str, Any]:
+    """Inspect current state of a debug session.
+
+    Args:
+        session_id: The debug session ID.
+
+    Returns:
+        Dict with complete current state.
+    """
+    try:
+        from src.core.debugger import inspect
+        result = inspect(session_id)
+        if not result.get("ok"):
+            raise HTTPException(status_code=404, detail=result.get("error", "Not found"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Debug inspect error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/debug/{session_id}/continue", tags=["debugger"])
+async def api_debug_continue(session_id: str) -> dict[str, Any]:
+    """Continue running until next breakpoint or completion.
+
+    Args:
+        session_id: The debug session ID.
+
+    Returns:
+        Dict with final state after stopping.
+    """
+    try:
+        from src.core.debugger import continue_debug
+        return continue_debug(session_id)
+    except Exception as e:
+        logger.error("Debug continue error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/debug/{session_id}/breakpoint", tags=["debugger"])
+async def api_debug_breakpoint(session_id: str, req: SetBreakpointRequest) -> dict[str, Any]:
+    """Set a breakpoint in a debug session.
+
+    Args:
+        session_id: The debug session ID.
+        req: Request with breakpoint type.
+
+    Returns:
+        Dict with success status.
+    """
+    try:
+        from src.core.debugger import set_breakpoint
+        if set_breakpoint(session_id, req.on):
+            return {"ok": True, "message": f"Breakpoint set on: {req.on}"}
+        raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Debug breakpoint error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/api/debug/{session_id}/context", tags=["debugger"])
+async def api_debug_modify_context(session_id: str, req: ModifyContextRequest) -> dict[str, Any]:
+    """Inject a message into a debug session's conversation.
+
+    Args:
+        session_id: The debug session ID.
+        req: Request with message to inject.
+
+    Returns:
+        Dict with success status.
+    """
+    try:
+        from src.core.debugger import modify_context
+        if modify_context(session_id, req.message):
+            return {"ok": True, "message": "Context modified"}
+        raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Debug context error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/api/debug/{session_id}/log", tags=["debugger"])
+async def api_debug_log(session_id: str) -> dict[str, Any]:
+    """Get the full debug log for a session.
+
+    Args:
+        session_id: The debug session ID.
+
+    Returns:
+        Dict with log entries.
+    """
+    try:
+        from src.core.debugger import get_debug_log
+        log = get_debug_log(session_id)
+        return {"ok": True, "log": log}
+    except Exception as e:
+        logger.error("Debug log error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 # --- Web Page Routes ---
 
 
@@ -1614,6 +2058,19 @@ async def page_traces(request: Request) -> HTMLResponse:
         Rendered HTML traces page.
     """
     return templates.TemplateResponse(request, "traces.html")
+
+
+@router.get("/debugger", response_class=HTMLResponse, tags=["web"])
+async def page_debugger(request: Request) -> HTMLResponse:
+    """Serve the agent debugger page.
+
+    Args:
+        request: FastAPI request object.
+
+    Returns:
+        Rendered HTML debugger page.
+    """
+    return templates.TemplateResponse(request, "debugger.html")
 
 
 @router.get("/settings", response_class=HTMLResponse, tags=["web"])

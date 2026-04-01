@@ -34,6 +34,7 @@ class AgentConfig:
     personality: str = "You are a helpful AI assistant."
     memory: bool = True
     schedule: str | None = None
+    budget: dict | None = None
 
 
 @dataclass
@@ -80,6 +81,7 @@ def load_agent(name: str) -> AgentConfig:
         personality=data.get("personality", "You are a helpful AI assistant."),
         memory=data.get("memory", True),
         schedule=data.get("schedule"),
+        budget=data.get("budget"),
     )
 
 
@@ -149,6 +151,38 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
         approval_enabled = True
     except Exception:
         approval_enabled = False
+
+    # --- Budget Governor: check before starting ---
+    budget_ok = True
+    try:
+        from src.core.budget import check_budget
+        budget_status = check_budget(agent.name)
+        if not budget_status["ok"]:
+            logger.warning("Agent '%s' budget exceeded", agent.name)
+            return AgentResult(
+                ok=False,
+                output="",
+                tools_used=tools_used,
+                duration_seconds=time.time() - start_time,
+                error=(
+                    f"Budget limit reached. Daily: ${budget_status['daily_spent']:.4f}"
+                    f"/${budget_status['daily_limit']:.2f}, "
+                    f"Monthly: ${budget_status['monthly_spent']:.4f}"
+                    f"/${budget_status['monthly_limit']:.2f}"
+                ),
+            )
+        budget_enabled = True
+    except Exception:
+        budget_enabled = False
+
+    # --- Model Router: auto-select model if set to 'auto' ---
+    try:
+        from src.core.model_router import select_model
+        if agent.model.lower() == "auto":
+            agent.model = select_model(task, agent)
+            logger.info("Model router selected '%s' for agent '%s'", agent.model, agent.name)
+    except Exception as e:
+        logger.debug("Model routing skipped: %s", e)
 
     try:
         # --- Security: scan prompt injection on user task ---
@@ -305,6 +339,24 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
                     track_usage(agent.name, tokens=estimated_tokens)
                 if pm_enabled:
                     update_process(process_pid, tokens=estimated_tokens)
+
+                # --- Budget Governor: track cost after each LLM call ---
+                if budget_enabled:
+                    try:
+                        from src.core.budget import check_budget as _recheck, track_cost
+                        track_cost(agent.name, estimated_tokens, agent.model)
+                        _budget = _recheck(agent.name)
+                        if not _budget["ok"]:
+                            logger.warning("Agent '%s' stopped: budget exceeded mid-run", agent.name)
+                            return AgentResult(
+                                ok=False,
+                                output="",
+                                tools_used=tools_used,
+                                duration_seconds=time.time() - start_time,
+                                error="Budget limit reached during execution",
+                            )
+                    except Exception:
+                        pass
 
                 # If no tool calls, we have the final response
                 if not result["tool_calls"]:

@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+{% block title %}Debugger - PAGAL OS{% endblock %}
+{% block nav_debugger %}active{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Agent Debugger</h1>
+    <p>Step through agent reasoning like a code debugger</p>
+</div>
+
+<div class="debugger-container" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+    <!-- Left panel: controls -->
+    <div class="card">
+        <h3>Start Debug Session</h3>
+        <div style="margin-bottom: 10px;">
+            <label>Agent Name:</label>
+            <input type="text" id="debug-agent" placeholder="e.g. research_agent"
+                   style="width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #444; background: #1a1a2e; color: #eee; border-radius: 4px;">
+        </div>
+        <div style="margin-bottom: 10px;">
+            <label>Task:</label>
+            <textarea id="debug-task" rows="3" placeholder="What should the agent do?"
+                      style="width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #444; background: #1a1a2e; color: #eee; border-radius: 4px;"></textarea>
+        </div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button onclick="startDebug()" class="btn btn-primary">Start Debug</button>
+            <button onclick="stepDebug()" class="btn btn-secondary" id="btn-step" disabled>Step</button>
+            <button onclick="continueDebug()" class="btn btn-secondary" id="btn-continue" disabled>Continue</button>
+            <button onclick="inspectDebug()" class="btn btn-secondary" id="btn-inspect" disabled>Inspect</button>
+        </div>
+
+        <div style="margin-top: 16px;">
+            <h4>Breakpoints</h4>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                <label><input type="checkbox" class="bp-check" value="tool_call"> Tool calls</label>
+                <label><input type="checkbox" class="bp-check" value="llm_call"> LLM calls</label>
+                <label><input type="checkbox" class="bp-check" value="error"> Errors</label>
+            </div>
+        </div>
+
+        <div style="margin-top: 16px;">
+            <h4>Inject Context</h4>
+            <input type="text" id="inject-msg" placeholder="Type a message to inject..."
+                   style="width: 100%; padding: 8px; border: 1px solid #444; background: #1a1a2e; color: #eee; border-radius: 4px;">
+            <button onclick="injectContext()" class="btn btn-secondary" style="margin-top: 4px;">Inject</button>
+        </div>
+
+        <!-- Status bar -->
+        <div id="debug-status" style="margin-top: 16px; padding: 10px; background: #1a1a2e; border-radius: 4px;">
+            <strong>Status:</strong> <span id="status-text">Not started</span> |
+            <strong>Step:</strong> <span id="step-count">0</span> |
+            <strong>Tools:</strong> <span id="tools-count">0</span>
+        </div>
+    </div>
+
+    <!-- Right panel: log/messages -->
+    <div class="card">
+        <h3>Debug Log</h3>
+        <div id="debug-log" style="height: 500px; overflow-y: auto; background: #0d0d1a; padding: 12px; border-radius: 4px; font-family: monospace; font-size: 13px;">
+            <p style="color: #666;">Start a debug session to see the agent's reasoning steps...</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentSessionId = null;
+
+async function startDebug() {
+    const agent = document.getElementById('debug-agent').value.trim();
+    const task = document.getElementById('debug-task').value.trim();
+    if (!agent || !task) { alert('Enter agent name and task'); return; }
+
+    try {
+        const res = await fetch('/api/debug/start', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({agent_name: agent, task: task})
+        });
+        const data = await res.json();
+        if (data.ok) {
+            currentSessionId = data.session_id;
+            document.getElementById('btn-step').disabled = false;
+            document.getElementById('btn-continue').disabled = false;
+            document.getElementById('btn-inspect').disabled = false;
+            updateStatus('paused', 0, 0);
+            appendLog('session_start', 'Debug session started: ' + currentSessionId);
+
+            // Set breakpoints from checkboxes
+            document.querySelectorAll('.bp-check:checked').forEach(async cb => {
+                await fetch(`/api/debug/${currentSessionId}/breakpoint`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({on: cb.value})
+                });
+            });
+        } else {
+            alert('Error: ' + (data.detail || data.error || 'Unknown error'));
+        }
+    } catch(e) { alert('Request failed: ' + e.message); }
+}
+
+async function stepDebug() {
+    if (!currentSessionId) return;
+    try {
+        const res = await fetch(`/api/debug/${currentSessionId}/step`, {method: 'POST'});
+        const data = await res.json();
+        if (data.ok) {
+            const type = data.type || 'step';
+            const content = data.content || data.tool_name || '';
+            appendLog(type, content, data);
+            if (data.state) updateFromState(data.state);
+        } else {
+            appendLog('error', data.error || 'Step failed');
+        }
+    } catch(e) { appendLog('error', e.message); }
+}
+
+async function continueDebug() {
+    if (!currentSessionId) return;
+    try {
+        const res = await fetch(`/api/debug/${currentSessionId}/continue`, {method: 'POST'});
+        const data = await res.json();
+        if (data.ok && data.state) {
+            updateFromState(data.state);
+            appendLog('continue', 'Ran to breakpoint/completion at step ' + data.state.current_step);
+        }
+    } catch(e) { appendLog('error', e.message); }
+}
+
+async function inspectDebug() {
+    if (!currentSessionId) return;
+    try {
+        const res = await fetch(`/api/debug/${currentSessionId}/inspect`);
+        const data = await res.json();
+        if (data.ok) {
+            appendLog('inspect', JSON.stringify({
+                status: data.status,
+                step: data.current_step,
+                messages: data.messages.length,
+                pending_tools: data.pending_tool_calls.length,
+                tools_used: data.tools_used
+            }, null, 2));
+        }
+    } catch(e) { appendLog('error', e.message); }
+}
+
+async function injectContext() {
+    if (!currentSessionId) return;
+    const msg = document.getElementById('inject-msg').value.trim();
+    if (!msg) return;
+    try {
+        const res = await fetch(`/api/debug/${currentSessionId}/context`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({message: msg})
+        });
+        const data = await res.json();
+        if (data.ok) {
+            appendLog('inject', 'Injected: ' + msg);
+            document.getElementById('inject-msg').value = '';
+        }
+    } catch(e) { appendLog('error', e.message); }
+}
+
+function appendLog(type, content, extra) {
+    const log = document.getElementById('debug-log');
+    const colors = {
+        'session_start': '#4CAF50', 'llm_call': '#2196F3', 'tool_call': '#FF9800',
+        'final_response': '#4CAF50', 'error': '#f44336', 'inspect': '#9C27B0',
+        'continue': '#00BCD4', 'inject': '#FFC107'
+    };
+    const color = colors[type] || '#888';
+    const div = document.createElement('div');
+    div.style.marginBottom = '8px';
+    div.style.borderLeft = `3px solid ${color}`;
+    div.style.paddingLeft = '8px';
+
+    let html = `<span style="color:${color};font-weight:bold;">[${type}]</span> `;
+    if (typeof content === 'string') {
+        html += `<span style="color:#ccc;">${content.substring(0, 500)}</span>`;
+    }
+    if (extra && extra.tool_name) {
+        html += `<br><span style="color:#aaa;">Tool: ${extra.tool_name}(${JSON.stringify(extra.tool_args || {}).substring(0, 200)})</span>`;
+    }
+    if (extra && extra.pending_tool_calls) {
+        html += `<br><span style="color:#aaa;">Pending tools: ${extra.pending_tool_calls.join(', ')}</span>`;
+    }
+    div.innerHTML = html;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+}
+
+function updateStatus(status, step, tools) {
+    document.getElementById('status-text').textContent = status;
+    document.getElementById('step-count').textContent = step;
+    document.getElementById('tools-count').textContent = tools;
+}
+
+function updateFromState(state) {
+    updateStatus(state.status, state.current_step, state.tools_used ? state.tools_used.length : 0);
+    if (state.status === 'done') {
+        document.getElementById('btn-step').disabled = true;
+        document.getElementById('btn-continue').disabled = true;
+    }
+}
+</script>
+{% endblock %}

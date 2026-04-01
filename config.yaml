@@ -33,3 +33,9 @@ voice:
 # Encryption at rest
 encryption:
   enabled: true
+
+# Budget defaults (per agent)
+budget:
+  daily_limit_usd: 1.00
+  monthly_limit_usd: 10.00
+  per_run_limit_usd: 0.10
