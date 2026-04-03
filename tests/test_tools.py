@@ -166,7 +166,7 @@ class TestShellTool:
         """Should timeout long-running commands."""
         import src.tools  # noqa: F401
 
-        # Use a command that takes too long
-        result = execute_tool("run_shell", {"command": "ping -n 100 127.0.0.1", "timeout": 1})
+        # Use a command that takes too long (sleep is available everywhere)
+        result = execute_tool("run_shell", {"command": "sleep 30", "timeout": 1})
         assert result["ok"] is False
         assert "timed out" in result.get("error", "").lower()

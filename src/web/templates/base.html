@@ -91,7 +91,7 @@
                     const ts = n.timestamp ? new Date(n.timestamp).toLocaleString() : '';
                     return `
                         <div style="padding:0.5rem 0.75rem; background:${bg}; border-bottom:1px solid var(--border); cursor:pointer;"
-                             onclick="markNotifRead('${n.id}', this)">
+                             onclick="markNotifRead(this.dataset.nid, this)" data-nid="${escapeHtml(String(n.id))}">
                             <div style="display:flex; gap:0.5rem; align-items:flex-start;">
                                 <span style="font-size:0.9rem;">${icon}</span>
                                 <div style="flex:1;">

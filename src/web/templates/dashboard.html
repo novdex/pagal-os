@@ -284,9 +284,9 @@
                     <td style="padding:0.5rem; border-bottom:1px solid var(--border);">${escapeHtml(h.schedule)}</td>
                     <td style="padding:0.5rem; border-bottom:1px solid var(--border);">${escapeHtml(h.task.substring(0, 50))}</td>
                     <td style="padding:0.5rem; border-bottom:1px solid var(--border);">
-                        <span class="status-dot ${statusClass}"></span> ${h.status}
+                        <span class="status-dot ${statusClass}"></span> ${escapeHtml(h.status)}
                     </td>
-                    <td style="padding:0.5rem; border-bottom:1px solid var(--border);">${lastRun}</td>
+                    <td style="padding:0.5rem; border-bottom:1px solid var(--border);">${escapeHtml(lastRun)}</td>
                     <td style="padding:0.5rem; border-bottom:1px solid var(--border); text-align:center;">
                         <button class="btn btn-danger btn-sm" onclick="stopHand('${escapeHtml(h.agent)}')">Stop</button>
                     </td>
@@ -440,11 +440,11 @@
                         <td style="padding:0.4rem; border-bottom:1px solid var(--border); font-family:monospace; font-size:0.85rem;">${escapeHtml(p.pid)}</td>
                         <td style="padding:0.4rem; border-bottom:1px solid var(--border);">${escapeHtml(p.agent_name)}</td>
                         <td style="padding:0.4rem; border-bottom:1px solid var(--border);">
-                            <span class="status-dot ${statusClass}"></span> ${p.status}
+                            <span class="status-dot ${statusClass}"></span> ${escapeHtml(p.status)}
                         </td>
                         <td style="padding:0.4rem; border-bottom:1px solid var(--border);">${Math.round(p.uptime_seconds)}s</td>
-                        <td style="padding:0.4rem; border-bottom:1px solid var(--border);">${p.tokens_used}</td>
-                        <td style="padding:0.4rem; border-bottom:1px solid var(--border);">${p.tool_calls}</td>
+                        <td style="padding:0.4rem; border-bottom:1px solid var(--border);">${escapeHtml(String(p.tokens_used))}</td>
+                        <td style="padding:0.4rem; border-bottom:1px solid var(--border);">${escapeHtml(String(p.tool_calls))}</td>
                         <td style="padding:0.4rem; border-bottom:1px solid var(--border); text-align:center;">
                             ${p.status === 'running' ?
                                 `<button class="btn btn-danger btn-sm" onclick="killProcess('${escapeHtml(p.pid)}')">Kill</button>` :

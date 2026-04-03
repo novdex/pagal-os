@@ -1,7 +1,10 @@
 """PAGAL OS Browser Tool — fetch and extract text from web pages."""
 
+import ipaddress
 import logging
+import socket
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -10,11 +13,43 @@ from src.tools.registry import register_tool
 logger = logging.getLogger("pagal_os")
 
 
+def _is_url_safe(url: str) -> str | None:
+    """Check if a URL is safe to fetch (not targeting private/reserved IPs).
+
+    Returns an error message if blocked, None if safe.
+    """
+    try:
+        parsed = urlparse(url)
+
+        # Only allow http and https
+        if parsed.scheme not in ("http", "https"):
+            return f"Blocked URL scheme: {parsed.scheme} (only http/https allowed)"
+
+        hostname = parsed.hostname
+        if not hostname:
+            return "Invalid URL: no hostname"
+
+        # Resolve hostname to IP and check for private/reserved ranges
+        try:
+            addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC)
+            for family, _, _, _, sockaddr in addr_info:
+                ip = ipaddress.ip_address(sockaddr[0])
+                if ip.is_private or ip.is_reserved or ip.is_loopback or ip.is_link_local:
+                    return f"Blocked: URL resolves to private/reserved IP ({ip})"
+        except socket.gaierror:
+            return f"Cannot resolve hostname: {hostname}"
+
+        return None
+    except Exception as e:
+        return f"URL validation error: {e}"
+
+
 def browse_url(url: str) -> dict[str, Any]:
     """Fetch a URL and extract readable text content.
 
     Uses httpx to fetch the page and BeautifulSoup to extract text,
     stripping scripts, styles, and navigation elements.
+    Blocks requests to private/reserved IP addresses (SSRF protection).
 
     Args:
         url: The URL to fetch and parse.
@@ -23,11 +58,17 @@ def browse_url(url: str) -> dict[str, Any]:
         Dict with 'ok', 'result' (extracted text), 'title', and 'url' keys.
     """
     try:
+        # SSRF protection: block private/reserved IPs
+        ssrf_error = _is_url_safe(url)
+        if ssrf_error:
+            logger.warning("Browse blocked (SSRF): %s — %s", url, ssrf_error)
+            return {"ok": False, "error": ssrf_error}
+
         headers = {
             "User-Agent": "Mozilla/5.0 (compatible; PagalOS/1.0; +https://pagal-os.local)",
         }
 
-        with httpx.Client(timeout=15, follow_redirects=True) as client:
+        with httpx.Client(timeout=15, follow_redirects=True, max_redirects=5) as client:
             response = client.get(url, headers=headers)
             response.raise_for_status()
 

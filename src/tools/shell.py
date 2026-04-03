@@ -8,6 +8,7 @@ command is audit-logged.
 import logging
 import os
 import re
+import shlex
 import subprocess
 from typing import Any
 
@@ -22,18 +23,30 @@ logger = logging.getLogger("pagal_os")
 
 # Exact substring matches — if any of these appear in the command, block it.
 BLOCKED_COMMANDS: list[str] = [
-    "rm -rf", "del /f", "format", "shutdown", "reboot",
-    "mkfs", "dd if=", ":(){ :|:& };:", "sudo rm",
+    "rm -rf", "rm -r", "del /f", "format", "shutdown", "reboot",
+    "mkfs", "dd if=", ":(){ :|:& };:", "sudo rm", "sudo su",
     "powershell -enc", "cmd /c del", "rmdir /s",
+    "chmod 777", "chown root", "passwd",
 ]
 
 # Regex patterns — checked after the substring pass.
 BLOCKED_PATTERNS: list[str] = [
-    r";\s*rm\s",       # command chaining with rm
-    r"&&\s*rm\s",      # command chaining with rm
-    r"\|\s*rm\s",      # piped into rm
-    r">\s*/dev/",      # redirect to system devices
-    r">\s*C:\\Windows", # redirect to system dirs (Windows)
+    r";\s*rm\s",           # command chaining with rm
+    r"&&\s*rm\s",          # command chaining with rm
+    r"\|\s*rm\s",          # piped into rm
+    r">\s*/dev/",          # redirect to system devices
+    r">\s*C:\\Windows",    # redirect to system dirs (Windows)
+    r"\$\(.*rm\s",         # command substitution with rm
+    r"`.*rm\s",            # backtick substitution with rm
+    r"curl\s.*\|\s*sh",    # pipe curl to shell
+    r"wget\s.*\|\s*sh",    # pipe wget to shell
+    r"curl\s.*\|\s*bash",  # pipe curl to bash
+    r"wget\s.*\|\s*bash",  # pipe wget to bash
+    r"python\s+-c\s",      # arbitrary python execution
+    r"perl\s+-e\s",        # arbitrary perl execution
+    r"ruby\s+-e\s",        # arbitrary ruby execution
+    r"nc\s+-l",            # netcat listener
+    r"ncat\s",             # ncat usage
 ]
 
 # Environment variable names that should never leak to child processes.
@@ -136,11 +149,24 @@ def run_shell(command: str, timeout: int = 10) -> dict[str, Any]:
     _audit_shell(command)
 
     try:
-        logger.info("Running shell command: %s", command)
+        logger.info("Running shell command: %s", command[:200])
+
+        # Use shlex.split to avoid shell=True where possible.
+        # Fall back to shell=True only for commands that need shell features
+        # (pipes, redirects, globs, etc.)
+        needs_shell = any(ch in command for ch in ("|", ">", "<", "*", "~", "&&", "||"))
+        if needs_shell:
+            cmd_args: str | list[str] = command
+        else:
+            try:
+                cmd_args = shlex.split(command)
+            except ValueError:
+                cmd_args = command
+                needs_shell = True
 
         result = subprocess.run(
-            command,
-            shell=True,
+            cmd_args,
+            shell=needs_shell,
             capture_output=True,
             text=True,
             timeout=timeout,

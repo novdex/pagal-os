@@ -146,6 +146,11 @@ def _command_handler(
         if not agent_name:
             return "Usage: /use <agent_name>\nExample: /use research_agent"
         try:
+            from src.core.validators import validate_agent_name
+            valid, err = validate_agent_name(agent_name)
+            if not valid:
+                return f"Invalid agent name: {err}"
+
             from src.core.runtime import load_agent
             load_agent(agent_name)
             _chat_agents[chat_id] = agent_name

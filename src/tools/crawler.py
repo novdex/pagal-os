@@ -128,11 +128,40 @@ def _extract_links(html: str, base_url: str, same_domain: str) -> list[str]:
     return list(links)
 
 
+def _is_crawl_url_safe(url: str) -> str | None:
+    """Block crawling private/reserved IP addresses (SSRF protection).
+
+    Returns an error message if blocked, None if safe.
+    """
+    import ipaddress
+    import socket
+
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return f"Blocked URL scheme: {parsed.scheme}"
+        hostname = parsed.hostname
+        if not hostname:
+            return "Invalid URL: no hostname"
+        try:
+            addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC)
+            for family, _, _, _, sockaddr in addr_info:
+                ip = ipaddress.ip_address(sockaddr[0])
+                if ip.is_private or ip.is_reserved or ip.is_loopback or ip.is_link_local:
+                    return f"Blocked: URL resolves to private/reserved IP ({ip})"
+        except socket.gaierror:
+            return f"Cannot resolve hostname: {hostname}"
+        return None
+    except Exception as e:
+        return f"URL validation error: {e}"
+
+
 def crawl_website(url: str, max_pages: int = 10, depth: int = 2) -> dict[str, Any]:
     """Crawl a website starting from a URL, following same-domain links.
 
     Extracts text from each page, respects robots.txt, and rate-limits
     requests to 1 per second.
+    Blocks requests to private/reserved IP addresses (SSRF protection).
 
     Args:
         url: Starting URL to crawl.
@@ -144,6 +173,12 @@ def crawl_website(url: str, max_pages: int = 10, depth: int = 2) -> dict[str, An
         Each page has 'url', 'title', 'text', and 'depth'.
     """
     try:
+        # SSRF protection
+        ssrf_error = _is_crawl_url_safe(url)
+        if ssrf_error:
+            logger.warning("Crawl blocked (SSRF): %s — %s", url, ssrf_error)
+            return {"ok": False, "error": ssrf_error}
+
         parsed_start = urlparse(url)
         domain = parsed_start.netloc
         base_url = f"{parsed_start.scheme}://{domain}"

@@ -81,7 +81,10 @@ def register_webhook(
         }
 
         _save_webhooks(webhooks)
-        url = f"http://localhost:8080/webhooks/{webhook_id}"
+        from src.core.config import get_config
+        cfg = get_config()
+        base_url = getattr(cfg, "base_url", None) or f"http://localhost:{cfg.api_port}"
+        url = f"{base_url}/webhooks/{webhook_id}"
         logger.info(
             "Registered webhook %s for agent '%s' (type=%s): %s",
             webhook_id, agent_name, event_type, url,

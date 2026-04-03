@@ -8,6 +8,58 @@ from src.tools.registry import register_tool
 
 logger = logging.getLogger("pagal_os")
 
+# Directories that agents are allowed to access.
+# Resolved at import time; additional paths can be added via config.
+_PAGAL_DIR = Path.home() / ".pagal-os"
+_ALLOWED_ROOTS: list[Path] = [
+    _PAGAL_DIR,
+    Path("/tmp"),
+    Path.cwd(),
+]
+
+# Sensitive paths that must never be read/written, even inside allowed roots.
+_BLOCKED_NAMES = {
+    ".env", ".env.local", ".env.production",
+    "credentials.json", "secrets.yaml", "id_rsa", "id_ed25519",
+    ".encryption_key",
+}
+_BLOCKED_PREFIXES = [
+    Path.home() / ".ssh",
+    Path.home() / ".aws",
+    Path.home() / ".gnupg",
+    Path.home() / ".config" / "gcloud",
+]
+
+
+def _is_path_allowed(file_path: Path) -> str | None:
+    """Return an error message if *file_path* is outside the sandbox, else None."""
+    resolved = file_path.resolve()
+
+    # Block sensitive filenames
+    if resolved.name.lower() in _BLOCKED_NAMES:
+        return f"Access denied (sensitive file): {resolved.name}"
+
+    # Block sensitive directories
+    for prefix in _BLOCKED_PREFIXES:
+        try:
+            resolved.relative_to(prefix.resolve())
+            return f"Access denied (sensitive directory): {prefix}"
+        except ValueError:
+            pass
+
+    # Ensure path is inside at least one allowed root
+    for root in _ALLOWED_ROOTS:
+        try:
+            resolved.relative_to(root.resolve())
+            return None
+        except ValueError:
+            pass
+
+    return (
+        f"Access denied: path '{resolved}' is outside allowed directories. "
+        f"Agents may only access files under {', '.join(str(r) for r in _ALLOWED_ROOTS)}."
+    )
+
 
 def read_file(path: str) -> dict[str, Any]:
     """Read the contents of a file.
@@ -20,6 +72,12 @@ def read_file(path: str) -> dict[str, Any]:
     """
     try:
         file_path = Path(path).expanduser().resolve()
+
+        # Path boundary check
+        access_error = _is_path_allowed(file_path)
+        if access_error:
+            logger.warning("File read blocked: %s", access_error)
+            return {"ok": False, "error": access_error}
 
         if not file_path.exists():
             return {"ok": False, "error": f"File not found: {file_path}"}
@@ -54,6 +112,12 @@ def write_file(path: str, content: str) -> dict[str, Any]:
     """
     try:
         file_path = Path(path).expanduser().resolve()
+
+        # Path boundary check
+        access_error = _is_path_allowed(file_path)
+        if access_error:
+            logger.warning("File write blocked: %s", access_error)
+            return {"ok": False, "error": access_error}
 
         # Create parent directories
         file_path.parent.mkdir(parents=True, exist_ok=True)

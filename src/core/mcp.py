@@ -29,6 +29,21 @@ _connections_lock = threading.Lock()
 # ============================================================================
 
 
+
+# Allowed MCP server commands — only these executables may be launched.
+_MCP_ALLOWED_COMMANDS: set[str] = {
+    "npx", "node", "python", "python3", "uvx", "deno",
+    "npx.cmd", "node.cmd",  # Windows variants
+}
+
+# Environment variable names that must never be passed to MCP subprocesses.
+_MCP_BLOCKED_ENV_KEYS: set[str] = {
+    "OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+    "AWS_SECRET_ACCESS_KEY", "GITHUB_TOKEN", "GH_TOKEN",
+    "SECRET_KEY", "DATABASE_URL",
+}
+
+
 def connect_mcp_server(
     name: str,
     command: str,
@@ -39,6 +54,8 @@ def connect_mcp_server(
 
     Starts the server process with stdio transport, sends the 'initialize'
     request, and caches the connection for future tool calls.
+
+    Only commands in the allowlist (_MCP_ALLOWED_COMMANDS) may be executed.
 
     Args:
         name: A friendly name for this MCP server connection.
@@ -53,6 +70,14 @@ def connect_mcp_server(
         if args is None:
             args = []
 
+        # --- Validate command against allowlist ---
+        base_command = os.path.basename(command)
+        if base_command not in _MCP_ALLOWED_COMMANDS and command not in _MCP_ALLOWED_COMMANDS:
+            logger.warning(
+                "MCP command blocked (not in allowlist): %s", command,
+            )
+            return False
+
         # On Windows, npx is actually npx.cmd
         resolved_command = command
         if platform.system() == "Windows" and command in ("npx", "node"):
@@ -62,10 +87,16 @@ def connect_mcp_server(
             if shutil.which(cmd_variant):
                 resolved_command = cmd_variant
 
-        # Merge environment
-        full_env = {**os.environ}
+        # Merge environment — strip sensitive keys
+        full_env = {
+            k: v for k, v in os.environ.items()
+            if k.upper() not in _MCP_BLOCKED_ENV_KEYS
+        }
         if env:
-            full_env.update(env)
+            # Also strip sensitive keys from user-provided env
+            for k, v in env.items():
+                if k.upper() not in _MCP_BLOCKED_ENV_KEYS:
+                    full_env[k] = v
 
         # Launch subprocess
         process = subprocess.Popen(

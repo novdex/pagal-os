@@ -177,6 +177,12 @@ async def api_agent_logs(name: str) -> dict[str, Any]:
     Returns:
         Dict with log entries.
     """
+    from src.core.validators import validate_agent_name
+
+    valid, err = validate_agent_name(name)
+    if not valid:
+        return {"ok": False, "logs": [], "error": err}
+
     config = get_config()
     log_file = config.logs_dir / f"{name}.log"
 
@@ -202,10 +208,12 @@ async def api_update_settings(req: SettingsUpdate) -> dict[str, Any]:
     Returns:
         Dict with success status.
     """
-    import os
-
+    # NOTE: API key changes are intentionally NOT allowed via the API.
+    # Users must set OPENROUTER_API_KEY via the .env file or environment
+    # to prevent unauthenticated attackers from redirecting LLM traffic.
     if req.openrouter_api_key is not None:
-        os.environ["OPENROUTER_API_KEY"] = req.openrouter_api_key
+        logger.warning("Rejected attempt to set API key via unauthenticated API endpoint")
+        return {"ok": False, "message": "API key changes are not allowed via the API. Set OPENROUTER_API_KEY in your .env file."}
 
     config = get_config()
     if req.default_model is not None:
