@@ -18,16 +18,19 @@ def call_llm(
     model: str,
     tools: list[dict] | None = None,
     timeout: int = 30,
+    agent_name: str | None = None,
 ) -> dict[str, Any]:
     """Call an LLM via OpenRouter or Ollama.
 
     Routes to Ollama if model starts with 'ollama/', otherwise uses OpenRouter.
+    Supports per-agent API key overrides via agent_credentials config.
 
     Args:
         messages: List of message dicts with 'role' and 'content' keys.
         model: Model identifier (e.g. 'ollama/llama3' or 'nvidia/nemotron-...').
         tools: Optional list of tool schemas in OpenAI function-calling format.
         timeout: Request timeout in seconds.
+        agent_name: Optional agent name — used to look up per-agent API keys.
 
     Returns:
         Dict with keys: ok (bool), content (str), tool_calls (list|None),
@@ -37,7 +40,7 @@ def call_llm(
     if model.startswith("ollama/"):
         return _call_ollama(messages, model, tools, timeout)
     else:
-        return _call_openrouter(messages, model, tools, timeout)
+        return _call_openrouter(messages, model, tools, timeout, agent_name=agent_name)
 
 
 def _call_ollama(
@@ -117,6 +120,7 @@ def _call_openrouter(
     model: str,
     tools: list[dict] | None,
     timeout: int,
+    agent_name: str | None = None,
 ) -> dict[str, Any]:
     """Call OpenRouter API.
 
@@ -125,11 +129,24 @@ def _call_openrouter(
         model: Model identifier for OpenRouter.
         tools: Optional tool schemas.
         timeout: Request timeout in seconds.
+        agent_name: Optional agent name for per-agent API key lookup.
 
     Returns:
         Standardized response dict.
     """
-    api_key = os.getenv("OPENROUTER_API_KEY", "")
+    # Per-agent credential: check agent_credentials first, then fall back to global key
+    api_key = ""
+    if agent_name:
+        try:
+            from src.core.config import get_config
+            cfg = get_config()
+            api_key = cfg.agent_credentials.get(agent_name, "")
+            if api_key:
+                logger.debug("Using per-agent API key for '%s'", agent_name)
+        except Exception:
+            pass
+    if not api_key:
+        api_key = os.getenv("OPENROUTER_API_KEY", "")
     if not api_key:
         return {"ok": False, "content": "", "tool_calls": None, "usage": None, "error": "OPENROUTER_API_KEY not set"}
 

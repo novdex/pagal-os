@@ -205,13 +205,37 @@ def cmd_server(_args: argparse.Namespace) -> None:
     signal.signal(signal.SIGTERM, _graceful_shutdown)
 
     try:
-        uvicorn.run(
-            "src.api.server:app",
-            host="0.0.0.0",
-            port=config.web_port,
-            reload=False,
-            log_level="info",
-        )
+        # TLS/HTTPS: if cert + key files are provided, serve over HTTPS.
+        # Set via PAGAL_TLS_CERT and PAGAL_TLS_KEY environment variables,
+        # or deploy behind a reverse proxy (nginx/Caddy) that terminates TLS.
+        import os as _os
+        ssl_certfile = _os.environ.get("PAGAL_TLS_CERT")
+        ssl_keyfile = _os.environ.get("PAGAL_TLS_KEY")
+
+        uvicorn_kwargs: dict = {
+            "app": "src.api.server:app",
+            "host": "0.0.0.0",
+            "port": config.web_port,
+            "reload": False,
+            "log_level": "info",
+        }
+
+        if ssl_certfile and ssl_keyfile:
+            uvicorn_kwargs["ssl_certfile"] = ssl_certfile
+            uvicorn_kwargs["ssl_keyfile"] = ssl_keyfile
+            print(f"  HTTPS enabled (cert={ssl_certfile})")
+        else:
+            logger.info(
+                "TLS not configured — set PAGAL_TLS_CERT and PAGAL_TLS_KEY "
+                "for HTTPS, or deploy behind a TLS-terminating reverse proxy."
+            )
+
+        # Proxy headers: trust X-Forwarded-For/Proto when behind a reverse proxy.
+        if _os.environ.get("PAGAL_BEHIND_PROXY", "").lower() in ("true", "1"):
+            uvicorn_kwargs["proxy_headers"] = True
+            uvicorn_kwargs["forwarded_allow_ips"] = "*"
+
+        uvicorn.run(**uvicorn_kwargs)
     except SystemExit:
         pass
 

@@ -2,11 +2,20 @@
 
 Supports both local and remote agent-to-agent communication. An agent on your
 machine can call an agent on another machine using simple HTTP POST requests.
+
+Security features:
+  - Bearer token authentication (A2A_AUTH_TOKEN)
+  - HMAC-SHA256 request signing to prevent tampering
+  - Replay protection via timestamp + nonce
+  - TLS-first: all outgoing calls default to HTTPS
 """
 
+import hashlib
+import hmac
 import json
 import logging
 import os
+import secrets
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -25,6 +34,64 @@ _a2a_server_thread: threading.Thread | None = None
 
 # Auth token for verifying incoming requests
 _auth_token: str = os.getenv("A2A_AUTH_TOKEN", "")
+
+# HMAC signing secret — shared between A2A peers.
+# Set via A2A_SIGNING_SECRET env var; if unset, signing is disabled.
+_signing_secret: str = os.getenv("A2A_SIGNING_SECRET", "")
+
+# Replay protection window (seconds)
+_REPLAY_WINDOW = 300  # 5 minutes
+_seen_nonces: dict[str, float] = {}
+_nonce_lock = threading.Lock()
+
+
+def _sign_payload(payload_bytes: bytes) -> str:
+    """Create an HMAC-SHA256 signature for a payload.
+
+    Returns empty string if signing is disabled (no secret configured).
+    """
+    if not _signing_secret:
+        return ""
+    return hmac.new(
+        _signing_secret.encode(), payload_bytes, hashlib.sha256,
+    ).hexdigest()
+
+
+def _verify_signature(payload_bytes: bytes, signature: str) -> bool:
+    """Verify an HMAC-SHA256 signature.
+
+    Returns True if signing is disabled (permissive) or signature is valid.
+    """
+    if not _signing_secret:
+        return True  # Signing not configured — allow
+    expected = hmac.new(
+        _signing_secret.encode(), payload_bytes, hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature)
+
+
+def _check_replay(nonce: str, timestamp: float) -> bool:
+    """Check if a request is a replay.
+
+    Returns True if the request is fresh, False if it's a replay.
+    """
+    now = time.time()
+
+    # Reject stale timestamps
+    if abs(now - timestamp) > _REPLAY_WINDOW:
+        return False
+
+    with _nonce_lock:
+        # Prune old nonces
+        stale = [k for k, v in _seen_nonces.items() if now - v > _REPLAY_WINDOW]
+        for k in stale:
+            del _seen_nonces[k]
+
+        # Check for replay
+        if nonce in _seen_nonces:
+            return False
+        _seen_nonces[nonce] = now
+        return True
 
 
 def register_agent_endpoint(agent_name: str, url: str) -> bool:
@@ -100,22 +167,38 @@ def call_remote_agent(
     try:
         import platform
         caller_id = f"pagal-os@{platform.node()}"
+        nonce = secrets.token_hex(16)
 
         payload = {
             "agent": agent_name,
             "task": task,
             "caller": caller_id,
             "auth_token": _auth_token,
+            "nonce": nonce,
+            "timestamp": time.time(),
         }
+
+        payload_bytes = json.dumps(payload, sort_keys=True).encode()
+        signature = _sign_payload(payload_bytes)
 
         start_time = time.time()
 
+        # Prefer HTTPS for remote communication
+        target_url = f"{url}/a2a/run"
+        if target_url.startswith("http://") and not any(
+            h in url for h in ("localhost", "127.0.0.1", "0.0.0.0")
+        ):
+            target_url = target_url.replace("http://", "https://", 1)
+            logger.debug("A2A: upgraded to HTTPS for remote call to %s", agent_name)
+
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if signature:
+            headers["X-A2A-Signature"] = signature
+        if _auth_token:
+            headers["Authorization"] = f"Bearer {_auth_token}"
+
         with httpx.Client(timeout=timeout) as client:
-            response = client.post(
-                f"{url}/a2a/run",
-                json=payload,
-                headers={"Content-Type": "application/json"},
-            )
+            response = client.post(target_url, json=payload, headers=headers)
             response.raise_for_status()
             data = response.json()
 
@@ -165,6 +248,23 @@ class _A2ARequestHandler(BaseHTTPRequestHandler):
 
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length)
+
+            # Verify HMAC signature if signing is enabled
+            signature = self.headers.get("X-A2A-Signature", "")
+            if _signing_secret and not _verify_signature(body, signature):
+                logger.warning("A2A: invalid signature on incoming request")
+                self._send_json(403, {"ok": False, "error": "Invalid signature"})
+                return
+
+            # Verify bearer token from header (preferred) or body
+            auth_header = self.headers.get("Authorization", "")
+            if _auth_token and auth_header:
+                if not auth_header.startswith("Bearer ") or not hmac.compare_digest(
+                    auth_header[7:], _auth_token
+                ):
+                    self._send_json(403, {"ok": False, "error": "Authentication failed"})
+                    return
+
             request = json.loads(body.decode("utf-8"))
 
             response = handle_a2a_request(request)
@@ -257,12 +357,20 @@ def handle_a2a_request(request: dict[str, Any]) -> dict[str, Any]:
         # Verify auth token if one is configured
         if _auth_token:
             incoming_token = request.get("auth_token", "")
-            if incoming_token != _auth_token:
+            if not hmac.compare_digest(incoming_token, _auth_token):
                 logger.warning(
                     "A2A auth failure from caller '%s'",
                     request.get("caller", "unknown"),
                 )
                 return {"ok": False, "error": "Authentication failed"}
+
+        # Replay protection
+        nonce = request.get("nonce", "")
+        timestamp = request.get("timestamp", 0.0)
+        if nonce and timestamp:
+            if not _check_replay(nonce, float(timestamp)):
+                logger.warning("A2A replay attack blocked from '%s'", request.get("caller", "unknown"))
+                return {"ok": False, "error": "Replay detected or stale request"}
 
         agent_name = request.get("agent", "")
         task = request.get("task", "")

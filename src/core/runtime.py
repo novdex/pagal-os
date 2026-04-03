@@ -348,6 +348,7 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
                     model=agent.model,
                     tools=tool_schemas,
                     timeout=60,
+                    agent_name=agent.name,
                 )
                 _llm_dur = int((time.time() - _llm_start) * 1000)
 

@@ -25,6 +25,10 @@ class Settings:
     storage_path: str = "~/.pagal-os"
     openrouter_api_key: str = ""
 
+    # Per-agent API key overrides: agent_name -> api_key
+    # Loaded from ~/.pagal-os/agent_credentials.yaml
+    agent_credentials: dict[str, str] = field(default_factory=dict)
+
     # Derived paths (set after load)
     base_dir: Path = field(default_factory=lambda: Path.home() / ".pagal-os")
     agents_dir: Path = field(default_factory=lambda: Path.home() / ".pagal-os" / "agents")
@@ -84,6 +88,22 @@ def load_config(config_path: str | Path | None = None) -> Settings:
 
     # Load API key from environment
     settings.openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "")
+
+    # Load per-agent credentials from ~/.pagal-os/agent_credentials.yaml
+    # Format: agent_name: openrouter_api_key
+    base = Path(settings.storage_path).expanduser()
+    creds_path = base / "agent_credentials.yaml"
+    if creds_path.exists():
+        try:
+            with open(creds_path, "r", encoding="utf-8") as f:
+                creds_data = yaml.safe_load(f) or {}
+            if isinstance(creds_data, dict):
+                settings.agent_credentials = {
+                    str(k): str(v) for k, v in creds_data.items()
+                }
+                logger.info("Loaded credentials for %d agent(s)", len(settings.agent_credentials))
+        except Exception as e:
+            logger.warning("Failed to load agent credentials: %s", e)
 
     # Resolve storage paths
     base = Path(settings.storage_path).expanduser()
