@@ -19,6 +19,10 @@ _project_root = Path(__file__).parent.parent.parent.parent
 _templates_dir = _project_root / "src" / "web" / "templates"
 templates = Jinja2Templates(directory=str(_templates_dir))
 
+# Expose CSRF token helper to all templates
+from src.api.auth import generate_csrf_token
+templates.env.globals["csrf_token"] = lambda: generate_csrf_token()
+
 
 @router.get("/", response_class=HTMLResponse)
 async def page_dashboard(request: Request) -> HTMLResponse:

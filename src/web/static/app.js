@@ -5,19 +5,29 @@
 
 const API_BASE = '';
 
+// Read CSRF token from meta tag (injected by server-side template).
+const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
 // ---- Utility Functions ----
 
 /**
  * Make a fetch request to the API and return JSON.
+ * Automatically includes the CSRF token header on mutating requests.
  * @param {string} url - API endpoint
  * @param {object} options - fetch options
  * @returns {Promise<object>} Parsed JSON response
  */
 async function apiCall(url, options = {}) {
     try {
+        const headers = { 'Content-Type': 'application/json', ...options.headers };
+        // Attach CSRF token on state-changing methods
+        const method = (options.method || 'GET').toUpperCase();
+        if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && CSRF_TOKEN) {
+            headers['X-CSRF-Token'] = CSRF_TOKEN;
+        }
         const response = await fetch(API_BASE + url, {
-            headers: { 'Content-Type': 'application/json' },
             ...options,
+            headers,
         });
         const data = await response.json();
         return data;

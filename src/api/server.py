@@ -5,10 +5,18 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.responses import Response
 
+from src.api.auth import (
+    APIAuthMiddleware,
+    generate_csrf_token,
+    verify_csrf_token,
+)
 from src.api.routes import router  # noqa: E402 — routes package (__init__.py)
 from src.core.config import get_config
 
@@ -18,6 +26,56 @@ logger = logging.getLogger("pagal_os")
 _project_root = Path(__file__).parent.parent.parent
 _templates_dir = _project_root / "src" / "web" / "templates"
 _static_dir = _project_root / "src" / "web" / "static"
+
+
+# ---------------------------------------------------------------------------
+# CSRF Protection Middleware
+# ---------------------------------------------------------------------------
+
+# HTTP methods that mutate state and require CSRF validation.
+_CSRF_UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+# Paths exempted from CSRF checks (API endpoints use bearer auth instead).
+_CSRF_EXEMPT_PREFIXES = (
+    "/api/",      # API routes use bearer-token auth
+    "/webhooks/", # Inbound webhooks
+)
+
+
+class CSRFMiddleware(BaseHTTPMiddleware):
+    """Middleware that validates CSRF tokens on state-changing requests to web pages.
+
+    API endpoints (/api/*) are exempt — they use bearer-token auth instead.
+    Web form submissions (POST to /, /create, /settings, etc.) must include
+    an X-CSRF-Token header or _csrf_token form field.
+    """
+
+    async def dispatch(
+        self, request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
+        # Only check unsafe methods
+        if request.method not in _CSRF_UNSAFE_METHODS:
+            return await call_next(request)
+
+        path = request.url.path
+
+        # API routes and webhooks use their own auth — skip CSRF
+        if any(path.startswith(prefix) for prefix in _CSRF_EXEMPT_PREFIXES):
+            return await call_next(request)
+
+        # Check CSRF token in header or form field
+        token = request.headers.get("X-CSRF-Token", "")
+        if not token:
+            # Try query param as fallback (for form submissions)
+            token = request.query_params.get("_csrf_token", "")
+
+        if not token or not verify_csrf_token(token):
+            return JSONResponse(
+                status_code=403,
+                content={"ok": False, "error": "CSRF token missing or invalid."},
+            )
+
+        return await call_next(request)
 
 
 @asynccontextmanager
@@ -84,6 +142,11 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# --- Security Middleware ---
+# Order matters: outermost middleware runs first.
+app.add_middleware(APIAuthMiddleware)
+app.add_middleware(CSRFMiddleware)
 
 # Mount static files
 app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")

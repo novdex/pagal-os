@@ -5,6 +5,7 @@ sanitisation, file access control, audit logging, and rate limiting.
 import logging
 import re
 import time
+import unicodedata
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,21 +24,71 @@ _rate_buckets: dict[str, list[float]] = defaultdict(list)
 
 # Common prompt-injection patterns (case-insensitive)
 _INJECTION_PATTERNS: list[re.Pattern[str]] = [
+    # --- Direct instruction override ---
     re.compile(r"ignore\s+(all\s+)?previous\s+instructions", re.IGNORECASE),
+    re.compile(r"disregard\s+(all\s+)?(prior|above|previous)\s+", re.IGNORECASE),
+    re.compile(r"forget\s+(all\s+)?(previous|prior|above|earlier)\s+", re.IGNORECASE),
+    re.compile(r"do\s+not\s+follow\s+(your|any)\s+(rules|instructions)", re.IGNORECASE),
+    re.compile(r"override\s+(your\s+)?(rules|safety|guidelines|restrictions|programming)", re.IGNORECASE),
+    re.compile(r"bypass\s+(your\s+)?(safety|rules|filters|restrictions)", re.IGNORECASE),
+
+    # --- Role / identity manipulation ---
     re.compile(r"you\s+are\s+now\b", re.IGNORECASE),
+    re.compile(r"pretend\s+(you\s+are|to\s+be)\b", re.IGNORECASE),
+    re.compile(r"act\s+as\s+(if\s+you|a\s+)", re.IGNORECASE),
+    re.compile(r"roleplay\s+as\b", re.IGNORECASE),
+    re.compile(r"from\s+now\s+on\s+you\s+(are|will)\b", re.IGNORECASE),
+    re.compile(r"switch\s+to\s+.{0,20}mode\b", re.IGNORECASE),
+
+    # --- System prompt / jailbreak ---
     re.compile(r"system\s*prompt\s*:", re.IGNORECASE),
     re.compile(r"\bjailbreak\b", re.IGNORECASE),
-    re.compile(r"disregard\s+(all\s+)?(prior|above)\s+", re.IGNORECASE),
     re.compile(r"new\s+instructions?\s*:", re.IGNORECASE),
-    re.compile(r"pretend\s+you\s+are\b", re.IGNORECASE),
-    re.compile(r"act\s+as\s+if\s+you", re.IGNORECASE),
-    re.compile(r"override\s+(your\s+)?(rules|safety|guidelines)", re.IGNORECASE),
-    re.compile(r"do\s+not\s+follow\s+(your|any)\s+(rules|instructions)", re.IGNORECASE),
+    re.compile(r"\bDAN\s*mode\b", re.IGNORECASE),
+    re.compile(r"developer\s+mode\s+(enabled|on|output)", re.IGNORECASE),
+    re.compile(r"reveal\s+(your\s+)?(system|hidden|initial)\s+(prompt|instructions)", re.IGNORECASE),
+    re.compile(r"what\s+(are|is)\s+your\s+(system|initial)\s+(prompt|instructions)", re.IGNORECASE),
+    re.compile(r"repeat\s+(your\s+)?(system|initial|original)\s+(prompt|instructions)", re.IGNORECASE),
+
+    # --- Delimiter / context manipulation ---
+    re.compile(r"\[SYSTEM\]", re.IGNORECASE),
+    re.compile(r"<\|?(system|im_start|im_end|endoftext)\|?>", re.IGNORECASE),
+    re.compile(r"###\s*(SYSTEM|INSTRUCTION|CONTEXT)\b", re.IGNORECASE),
+
+    # --- Output manipulation ---
+    re.compile(r"respond\s+only\s+with\b", re.IGNORECASE),
+    re.compile(r"output\s+everything\s+above\b", re.IGNORECASE),
 ]
+
+
+def _normalize_text(text: str) -> str:
+    """Normalise text before scanning for injection patterns.
+
+    1. Unicode NFKC normalisation — collapses homoglyphs and width variants.
+    2. Strips zero-width characters that might be used to evade regex.
+    3. Collapses multiple whitespace to single spaces.
+    """
+    # NFKC normalises full-width chars, ligatures, compatibility forms
+    text = unicodedata.normalize("NFKC", text)
+
+    # Strip zero-width and invisible characters
+    text = re.sub(
+        r"[\u200b\u200c\u200d\u2060\ufeff\u00ad\u034f\u180e]",
+        "",
+        text,
+    )
+
+    # Collapse whitespace
+    text = re.sub(r"\s+", " ", text)
+
+    return text
 
 
 def scan_prompt_injection(text: str) -> dict[str, Any]:
     """Detect common prompt-injection patterns in *text*.
+
+    Applies Unicode normalisation before scanning to defeat homoglyph and
+    zero-width character evasion techniques.
 
     Args:
         text: The user message or prompt to scan.
@@ -47,9 +98,10 @@ def scan_prompt_injection(text: str) -> dict[str, Any]:
         descriptions).
     """
     try:
+        normalised = _normalize_text(text)
         threats: list[str] = []
         for pattern in _INJECTION_PATTERNS:
-            match = pattern.search(text)
+            match = pattern.search(normalised)
             if match:
                 threats.append(f"Pattern matched: '{match.group()}'")
 
