@@ -5,6 +5,7 @@ generate summaries so agents retain context even when the user returns later.
 """
 
 import logging
+import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -12,6 +13,37 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("pagal_os")
+
+
+# ---------------------------------------------------------------------------
+# Memory Content Sanitisation
+# ---------------------------------------------------------------------------
+
+# Patterns that should never be stored in persistent memory.
+_MEMORY_BLOCKED_PATTERNS = [
+    re.compile(r"(sk-[a-zA-Z0-9]{20,})", re.IGNORECASE),      # OpenAI-style API keys
+    re.compile(r"(AKIA[0-9A-Z]{16})", re.IGNORECASE),          # AWS access key IDs
+    re.compile(r"(ghp_[a-zA-Z0-9]{20,})", re.IGNORECASE),       # GitHub personal tokens
+    re.compile(r"(xox[bpras]-[a-zA-Z0-9\-]+)", re.IGNORECASE), # Slack tokens
+    re.compile(r"-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----"),    # Private keys
+]
+
+
+def _sanitize_memory_content(content: str) -> str:
+    """Sanitise content before storing in persistent memory.
+
+    Redacts API keys, tokens, and other sensitive patterns to prevent
+    memory poisoning and credential leakage across sessions.
+
+    Args:
+        content: Raw message content.
+
+    Returns:
+        Sanitised content with sensitive values replaced by [REDACTED].
+    """
+    for pattern in _MEMORY_BLOCKED_PATTERNS:
+        content = pattern.sub("[REDACTED]", content)
+    return content
 
 # Database path inside the PAGAL OS storage directory (kept for backward compatibility)
 _DB_PATH: Path = Path.home() / ".pagal-os" / "pagal.db"
@@ -107,11 +139,14 @@ def save_message(
         importance: Score from 0.0 to 1.0 (default 0.5).
     """
     try:
+        # Sanitise content before persisting — redacts API keys, tokens, etc.
+        safe_content = _sanitize_memory_content(content[:10000])
+
         conn = _get_connection()
         conn.execute(
             """INSERT INTO agent_memory (agent_name, session_id, role, content, importance)
                VALUES (?, ?, ?, ?, ?)""",
-            (agent_name, session_id, role, content[:10000], max(0.0, min(1.0, importance))),
+            (agent_name, session_id, role, safe_content, max(0.0, min(1.0, importance))),
         )
         conn.commit()
         conn.close()

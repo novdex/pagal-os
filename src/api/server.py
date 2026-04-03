@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -26,6 +27,54 @@ logger = logging.getLogger("pagal_os")
 _project_root = Path(__file__).parent.parent.parent
 _templates_dir = _project_root / "src" / "web" / "templates"
 _static_dir = _project_root / "src" / "web" / "static"
+
+
+# ---------------------------------------------------------------------------
+# Security Headers Middleware
+# ---------------------------------------------------------------------------
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add standard security headers to every HTTP response."""
+
+    async def dispatch(
+        self, request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        # HSTS — only effective over HTTPS, but harmless to set unconditionally.
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
+
+# ---------------------------------------------------------------------------
+# Request Size Limit Middleware
+# ---------------------------------------------------------------------------
+
+# 1 MB max request body size (prevents DoS via giant payloads).
+_MAX_REQUEST_BODY_BYTES = 1 * 1024 * 1024
+
+
+class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
+    """Reject requests with bodies exceeding _MAX_REQUEST_BODY_BYTES."""
+
+    async def dispatch(
+        self, request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > _MAX_REQUEST_BODY_BYTES:
+            return JSONResponse(
+                status_code=413,
+                content={
+                    "ok": False,
+                    "error": f"Request body too large (max {_MAX_REQUEST_BODY_BYTES // 1024}KB).",
+                },
+            )
+        return await call_next(request)
 
 
 # ---------------------------------------------------------------------------
@@ -144,9 +193,24 @@ app = FastAPI(
 )
 
 # --- Security Middleware ---
-# Order matters: outermost middleware runs first.
+# Order matters: outermost middleware runs first (added last).
 app.add_middleware(APIAuthMiddleware)
 app.add_middleware(CSRFMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RequestSizeLimitMiddleware)
+
+# CORS — restrict to same-origin by default.
+# Override via PAGAL_CORS_ORIGINS env var (comma-separated list).
+import os as _os
+_cors_origins_raw = _os.environ.get("PAGAL_CORS_ORIGINS", "")
+_cors_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()] if _cors_origins_raw else []
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,  # Empty = same-origin only
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+    allow_headers=["Authorization", "Content-Type", "X-CSRF-Token"],
+)
 
 # Mount static files
 app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")

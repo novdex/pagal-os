@@ -9,12 +9,40 @@ logger = logging.getLogger("pagal_os")
 
 
 def _setup_logging() -> None:
-    """Configure logging for the CLI."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    """Configure logging for the CLI.
+
+    Uses structured JSON format when PAGAL_LOG_FORMAT=json is set,
+    otherwise falls back to human-readable plain-text format.
+    """
+    import os
+
+    log_format = os.environ.get("PAGAL_LOG_FORMAT", "text").lower()
+
+    if log_format == "json":
+        import json as _json
+
+        class _JSONFormatter(logging.Formatter):
+            def format(self, record: logging.LogRecord) -> str:
+                entry = {
+                    "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
+                    "level": record.levelname,
+                    "logger": record.name,
+                    "msg": record.getMessage(),
+                }
+                if record.exc_info and record.exc_info[1]:
+                    entry["exception"] = str(record.exc_info[1])
+                return _json.dumps(entry, default=str)
+
+        handler = logging.StreamHandler()
+        handler.setFormatter(_JSONFormatter())
+        logging.root.addHandler(handler)
+        logging.root.setLevel(logging.INFO)
+    else:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            datefmt="%H:%M:%S",
+        )
 
 
 def cmd_create(args: argparse.Namespace) -> None:

@@ -515,14 +515,41 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
                                 error=f"Resource limit exceeded: {limit_exceeded}",
                             )
 
-                    func_info = tool_call.get("function", {})
+                    # --- Validate tool call structure ---
+                    func_info = tool_call.get("function") if isinstance(tool_call, dict) else None
+                    if not isinstance(func_info, dict):
+                        logger.warning(
+                            "Agent '%s' returned malformed tool call (no function key): %s",
+                            agent.name, str(tool_call)[:200],
+                        )
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.get("id", "") if isinstance(tool_call, dict) else "",
+                            "content": json.dumps({"ok": False, "error": "Malformed tool call"}),
+                        })
+                        continue
+
                     tool_name = func_info.get("name", "")
                     tool_args_str = func_info.get("arguments", "{}")
+
+                    if not tool_name or not isinstance(tool_name, str):
+                        logger.warning(
+                            "Agent '%s' returned tool call with missing/invalid name",
+                            agent.name,
+                        )
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.get("id", ""),
+                            "content": json.dumps({"ok": False, "error": "Missing tool name"}),
+                        })
+                        continue
 
                     # Parse arguments
                     try:
                         tool_args = json.loads(tool_args_str) if isinstance(tool_args_str, str) else tool_args_str
                     except json.JSONDecodeError:
+                        tool_args = {}
+                    if not isinstance(tool_args, dict):
                         tool_args = {}
 
                     logger.info("Agent '%s' calling tool: %s(%s)", agent.name, tool_name, tool_args)
