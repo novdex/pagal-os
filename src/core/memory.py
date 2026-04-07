@@ -21,7 +21,7 @@ logger = logging.getLogger("pagal_os")
 
 # Patterns that should never be stored in persistent memory.
 _MEMORY_BLOCKED_PATTERNS = [
-    re.compile(r"(sk-[a-zA-Z0-9]{20,})", re.IGNORECASE),      # OpenAI-style API keys
+    re.compile(r"(sk-[a-zA-Z0-9_-]{20,})", re.IGNORECASE),     # OpenAI-style API keys (sk-..., sk-proj-...)
     re.compile(r"(AKIA[0-9A-Z]{16})", re.IGNORECASE),          # AWS access key IDs
     re.compile(r"(ghp_[a-zA-Z0-9]{20,})", re.IGNORECASE),       # GitHub personal tokens
     re.compile(r"(xox[bpras]-[a-zA-Z0-9\-]+)", re.IGNORECASE), # Slack tokens

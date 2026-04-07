@@ -71,6 +71,9 @@ def init_rag_db() -> None:
 def _chunk_text(text: str, chunk_size: int = 500, overlap: int = 100) -> list[str]:
     """Split text into overlapping chunks by sentence boundaries.
 
+    Falls back to word-boundary splitting when sentences are longer than
+    chunk_size (e.g. plain text without punctuation).
+
     Args:
         text: Full document text.
         chunk_size: Target characters per chunk.
@@ -79,12 +82,34 @@ def _chunk_text(text: str, chunk_size: int = 500, overlap: int = 100) -> list[st
     Returns:
         List of text chunks.
     """
+    if not text or not text.strip():
+        return [text[:chunk_size] if text else ""]
+
     # Split on sentence boundaries
     sentences = re.split(r'(?<=[.!?])\s+', text)
     chunks: list[str] = []
     current = ""
 
     for sentence in sentences:
+        # If a single sentence exceeds chunk_size, split it by words
+        if len(sentence) > chunk_size:
+            if current.strip():
+                chunks.append(current.strip())
+                current = ""
+            words = sentence.split()
+            sub = ""
+            for word in words:
+                if len(sub) + len(word) + 1 > chunk_size and sub:
+                    chunks.append(sub.strip())
+                    # Overlap: keep last few words
+                    keep = sub.split()[-overlap // 6:] if sub.split() else []
+                    sub = " ".join(keep) + " " + word
+                else:
+                    sub += " " + word if sub else word
+            if sub.strip():
+                current = sub
+            continue
+
         if len(current) + len(sentence) > chunk_size and current:
             chunks.append(current.strip())
             # Keep overlap from end of current chunk
@@ -97,7 +122,7 @@ def _chunk_text(text: str, chunk_size: int = 500, overlap: int = 100) -> list[st
     if current.strip():
         chunks.append(current.strip())
 
-    return chunks if chunks else [text[:chunk_size]]
+    return chunks if chunks else [text[:chunk_size] if text else ""]
 
 
 # ---------------------------------------------------------------------------

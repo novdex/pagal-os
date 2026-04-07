@@ -24,7 +24,10 @@ class TestRAG:
 
     def test_ingest_text(self) -> None:
         from src.core.rag import ingest_text
-        result = ingest_text("The capital of France is Paris. Paris is known for the Eiffel Tower.", title="test_facts")
+        # Use unique content to avoid dedup
+        import time
+        content = f"The capital of France is Paris. Test timestamp: {time.time()}"
+        result = ingest_text(content, title="test_facts")
         assert result["ok"] is True
         assert result["chunks"] > 0
 
