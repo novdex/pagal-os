@@ -105,11 +105,20 @@ def create_plugin_template(name: str) -> dict[str, Any]:
     """Create a starter plugin file from a template.
 
     Args:
-        name: Plugin name (will create {name}.py).
+        name: Plugin name (will create {name}.py). Must be a valid
+              Python identifier (alphanumeric + underscore).
 
     Returns:
         Dict with 'ok' and file path.
     """
+    import re
+    if not name or not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', name):
+        return {
+            "ok": False,
+            "error": "Plugin name must be a valid Python identifier "
+                     "(letters, digits, underscores; cannot start with digit).",
+        }
+
     plugins_dir = get_plugins_dir()
     plugin_path = plugins_dir / f"{name}.py"
 

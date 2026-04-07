@@ -220,36 +220,36 @@ def ingest_document(
         # Check for duplicate
         content_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
         conn = _get_conn()
-        existing = conn.execute(
-            "SELECT id FROM rag_documents WHERE content_hash = ? AND agent_name = ?",
-            (content_hash, agent_name),
-        ).fetchone()
-        if existing:
-            conn.close()
-            return {"ok": True, "filename": path.name, "chunks": 0, "message": "Document already ingested"}
+        try:
+            existing = conn.execute(
+                "SELECT id FROM rag_documents WHERE content_hash = ? AND agent_name = ?",
+                (content_hash, agent_name),
+            ).fetchone()
+            if existing:
+                return {"ok": True, "filename": path.name, "chunks": 0, "message": "Document already ingested"}
 
-        # Chunk the text
-        chunks = _chunk_text(text, chunk_size=chunk_size)
+            # Chunk the text
+            chunks = _chunk_text(text, chunk_size=chunk_size)
 
-        # Store document
-        cursor = conn.execute(
-            "INSERT INTO rag_documents (agent_name, filename, content_hash, chunk_count) VALUES (?, ?, ?, ?)",
-            (agent_name, path.name, content_hash, len(chunks)),
-        )
-        doc_id = cursor.lastrowid
-
-        # Store chunks
-        for i, chunk in enumerate(chunks):
-            conn.execute(
-                "INSERT INTO rag_chunks (doc_id, agent_name, chunk_index, content) VALUES (?, ?, ?, ?)",
-                (doc_id, agent_name, i, chunk),
+            # Store document
+            cursor = conn.execute(
+                "INSERT INTO rag_documents (agent_name, filename, content_hash, chunk_count) VALUES (?, ?, ?, ?)",
+                (agent_name, path.name, content_hash, len(chunks)),
             )
+            doc_id = cursor.lastrowid
 
-        conn.commit()
-        conn.close()
+            # Store chunks
+            for i, chunk in enumerate(chunks):
+                conn.execute(
+                    "INSERT INTO rag_chunks (doc_id, agent_name, chunk_index, content) VALUES (?, ?, ?, ?)",
+                    (doc_id, agent_name, i, chunk),
+                )
 
-        logger.info("Ingested '%s': %d chunks for agent '%s'", path.name, len(chunks), agent_name)
-        return {"ok": True, "filename": path.name, "chunks": len(chunks)}
+            conn.commit()
+            logger.info("Ingested '%s': %d chunks for agent '%s'", path.name, len(chunks), agent_name)
+            return {"ok": True, "filename": path.name, "chunks": len(chunks)}
+        finally:
+            conn.close()
 
     except Exception as e:
         logger.error("RAG ingest failed: %s", e)
@@ -279,33 +279,32 @@ def ingest_text(
 
         content_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
         conn = _get_conn()
+        try:
+            existing = conn.execute(
+                "SELECT id FROM rag_documents WHERE content_hash = ? AND agent_name = ?",
+                (content_hash, agent_name),
+            ).fetchone()
+            if existing:
+                return {"ok": True, "filename": title, "chunks": 0, "message": "Content already ingested"}
 
-        existing = conn.execute(
-            "SELECT id FROM rag_documents WHERE content_hash = ? AND agent_name = ?",
-            (content_hash, agent_name),
-        ).fetchone()
-        if existing:
-            conn.close()
-            return {"ok": True, "filename": title, "chunks": 0, "message": "Content already ingested"}
+            chunks = _chunk_text(content)
 
-        chunks = _chunk_text(content)
-
-        cursor = conn.execute(
-            "INSERT INTO rag_documents (agent_name, filename, content_hash, chunk_count) VALUES (?, ?, ?, ?)",
-            (agent_name, title, content_hash, len(chunks)),
-        )
-        doc_id = cursor.lastrowid
-
-        for i, chunk in enumerate(chunks):
-            conn.execute(
-                "INSERT INTO rag_chunks (doc_id, agent_name, chunk_index, content) VALUES (?, ?, ?, ?)",
-                (doc_id, agent_name, i, chunk),
+            cursor = conn.execute(
+                "INSERT INTO rag_documents (agent_name, filename, content_hash, chunk_count) VALUES (?, ?, ?, ?)",
+                (agent_name, title, content_hash, len(chunks)),
             )
+            doc_id = cursor.lastrowid
 
-        conn.commit()
-        conn.close()
+            for i, chunk in enumerate(chunks):
+                conn.execute(
+                    "INSERT INTO rag_chunks (doc_id, agent_name, chunk_index, content) VALUES (?, ?, ?, ?)",
+                    (doc_id, agent_name, i, chunk),
+                )
 
-        return {"ok": True, "filename": title, "chunks": len(chunks)}
+            conn.commit()
+            return {"ok": True, "filename": title, "chunks": len(chunks)}
+        finally:
+            conn.close()
 
     except Exception as e:
         return {"ok": False, "error": str(e)}
@@ -331,17 +330,18 @@ def query_documents(
     try:
         init_rag_db()
         conn = _get_conn()
-
-        # Get all chunks for this agent + global
-        rows = conn.execute(
-            """SELECT c.content, c.doc_id, d.filename
-               FROM rag_chunks c
-               JOIN rag_documents d ON c.doc_id = d.id
-               WHERE c.agent_name IN (?, '_global')
-               ORDER BY c.id""",
-            (agent_name,),
-        ).fetchall()
-        conn.close()
+        try:
+            # Get all chunks for this agent + global
+            rows = conn.execute(
+                """SELECT c.content, c.doc_id, d.filename
+                   FROM rag_chunks c
+                   JOIN rag_documents d ON c.doc_id = d.id
+                   WHERE c.agent_name IN (?, '_global')
+                   ORDER BY c.id""",
+                (agent_name,),
+            ).fetchall()
+        finally:
+            conn.close()
 
         if not rows:
             return {"ok": True, "results": [], "message": "No documents ingested yet"}

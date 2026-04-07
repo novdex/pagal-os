@@ -55,25 +55,38 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 # Request Size Limit Middleware
 # ---------------------------------------------------------------------------
 
-# 1 MB max request body size (prevents DoS via giant payloads).
+# Default: 1 MB max request body. Voice/file upload endpoints get 25 MB.
 _MAX_REQUEST_BODY_BYTES = 1 * 1024 * 1024
+_MAX_UPLOAD_BODY_BYTES = 25 * 1024 * 1024
+
+# Paths that accept larger uploads (voice, file upload).
+_LARGE_UPLOAD_PREFIXES = ("/api/voice/", "/api/rag/upload")
 
 
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
-    """Reject requests with bodies exceeding _MAX_REQUEST_BODY_BYTES."""
+    """Reject requests with bodies exceeding the size limit.
+
+    Voice and file upload endpoints get a higher limit (25MB).
+    """
 
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
         content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > _MAX_REQUEST_BODY_BYTES:
-            return JSONResponse(
-                status_code=413,
-                content={
-                    "ok": False,
-                    "error": f"Request body too large (max {_MAX_REQUEST_BODY_BYTES // 1024}KB).",
-                },
-            )
+        if content_length:
+            path = request.url.path
+            limit = _MAX_UPLOAD_BODY_BYTES if any(
+                path.startswith(p) for p in _LARGE_UPLOAD_PREFIXES
+            ) else _MAX_REQUEST_BODY_BYTES
+
+            if int(content_length) > limit:
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "ok": False,
+                        "error": f"Request body too large (max {limit // (1024 * 1024)}MB).",
+                    },
+                )
         return await call_next(request)
 
 

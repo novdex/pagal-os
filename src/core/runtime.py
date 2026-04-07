@@ -297,6 +297,11 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
         except Exception:
             health_enabled = False
 
+        estimated_tokens = 0  # Running total; updated after each LLM call
+        _input_tok = 0
+        _output_tok = 0
+        _tokens_estimated = True
+
         try:
             for loop_num in range(max_loops):
                 # --- Health: send heartbeat every loop iteration ---
@@ -360,7 +365,7 @@ def run_agent(agent: AgentConfig, task: str) -> AgentResult:
                             trace_run_id, agent.name, "llm_call",
                             f"Model={agent.model} | Response: {_llm_summary}",
                             duration_ms=_llm_dur,
-                            tokens=estimated_tokens if 'estimated_tokens' in dir() else 0,
+                            tokens=estimated_tokens if estimated_tokens else 0,
                         )
                     except Exception:
                         pass
