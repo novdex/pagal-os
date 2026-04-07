@@ -1,0 +1,17 @@
+services:
+  pagal-os:
+    build:
+      context: .
+      dockerfile: Dockerfile.ci
+    container_name: pagal-os-ci
+    ports:
+      - "3000:3000"
+    environment:
+      - PAGAL_LOG_FORMAT=json
+      - PAGAL_SANDBOX_MODE=thread
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:3000/api/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s

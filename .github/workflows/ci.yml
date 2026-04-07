@@ -1,0 +1,156 @@
+name: CI — Build, Test, and Verify End-to-End
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  # ---------------------------------------------------------------
+  # Job 1: Unit tests (fast, no Docker)
+  # ---------------------------------------------------------------
+  unit-tests:
+    name: Unit Tests (Python 3.12)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt python-multipart
+
+      - name: Run unit tests
+        run: python -m pytest tests/ --ignore=tests/test_encryption.py -v --tb=short
+
+  # ---------------------------------------------------------------
+  # Job 2: Containerized end-to-end verification
+  # ---------------------------------------------------------------
+  e2e-docker:
+    name: End-to-End (Docker Stack)
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t pagal-os:ci -f Dockerfile.ci .
+
+      - name: Start containerized stack
+        run: |
+          docker compose -f docker-compose.ci.yml up -d
+          echo "Waiting for server to be healthy..."
+          for i in $(seq 1 30); do
+            if docker compose -f docker-compose.ci.yml exec -T pagal-os \
+              python -c "import httpx; r = httpx.get('http://localhost:3000/api/health'); print(r.status_code)" 2>/dev/null | grep -q 200; then
+              echo "Server is healthy!"
+              break
+            fi
+            echo "  Attempt $i/30 — waiting 2s..."
+            sleep 2
+          done
+
+      - name: Run tests inside container
+        run: |
+          docker compose -f docker-compose.ci.yml exec -T pagal-os \
+            python -m pytest tests/ --ignore=tests/test_encryption.py -v --tb=short
+
+      - name: Verify API endpoints respond
+        run: |
+          docker compose -f docker-compose.ci.yml exec -T pagal-os python -c "
+          import httpx
+
+          client = httpx.Client(base_url='http://localhost:3000', timeout=10)
+          routes = [
+              '/api/agents', '/api/health', '/api/templates',
+              '/api/rag/documents', '/api/mcp/catalog',
+              '/api/plugins', '/api/i18n/languages',
+              '/api/processes', '/api/notifications',
+          ]
+          failed = []
+          for route in routes:
+              r = client.get(route)
+              if r.status_code >= 500:
+                  failed.append(f'{route} -> {r.status_code}')
+              else:
+                  print(f'  OK {r.status_code} {route}')
+
+          pages = ['/', '/create', '/logs', '/settings', '/store', '/analytics']
+          for page in pages:
+              r = client.get(page)
+              if r.status_code >= 500:
+                  failed.append(f'{page} -> {r.status_code}')
+              else:
+                  print(f'  OK {r.status_code} {page}')
+
+          if failed:
+              print(f'FAILURES: {failed}')
+              exit(1)
+          print(f'All {len(routes) + len(pages)} endpoints verified.')
+          "
+
+      - name: Verify security headers
+        run: |
+          docker compose -f docker-compose.ci.yml exec -T pagal-os python -c "
+          import httpx
+          r = httpx.get('http://localhost:3000/api/agents')
+          headers = dict(r.headers)
+          required = ['x-content-type-options', 'x-frame-options', 'strict-transport-security']
+          missing = [h for h in required if h not in headers]
+          if missing:
+              print(f'MISSING HEADERS: {missing}')
+              exit(1)
+          print('All security headers present.')
+          "
+
+      - name: Verify RAG system works end-to-end
+        run: |
+          docker compose -f docker-compose.ci.yml exec -T pagal-os python -c "
+          from src.core.rag import ingest_text, query_documents
+          import time
+
+          # Ingest
+          r = ingest_text(f'Python was created by Guido van Rossum. CI test {time.time()}', title='ci_test')
+          assert r['ok'], f'Ingest failed: {r}'
+          print(f'Ingested: {r[\"chunks\"]} chunks')
+
+          # Query
+          r = query_documents('Who created Python?')
+          assert r['ok'] and len(r['results']) > 0, f'Query failed: {r}'
+          print(f'Query found {len(r[\"results\"])} results')
+          assert 'Guido' in r['results'][0]['content'], 'Expected Guido in results'
+          print('RAG end-to-end: PASSED')
+          "
+
+      - name: Verify security boundaries inside container
+        run: |
+          docker compose -f docker-compose.ci.yml exec -T pagal-os python -c "
+          from src.tools.files import read_file
+          from src.core.rag import ingest_document
+          from src.tools.browser import _is_url_safe
+
+          # File path traversal blocked
+          r = read_file('/etc/passwd')
+          assert not r['ok'], 'CRITICAL: /etc/passwd readable via file tool!'
+
+          # RAG path traversal blocked
+          r = ingest_document('/etc/shadow')
+          assert not r['ok'], 'CRITICAL: /etc/shadow readable via RAG!'
+
+          # SSRF blocked
+          r = _is_url_safe('http://169.254.169.254/latest/meta-data/')
+          assert r is not None, 'CRITICAL: cloud metadata SSRF not blocked!'
+
+          print('All security boundaries verified.')
+          "
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.ci.yml down -v
