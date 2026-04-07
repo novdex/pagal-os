@@ -202,6 +202,31 @@ def init_all_tables() -> None:
                 agent_name TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
+            -- RAG (Retrieval-Augmented Generation) document store
+            CREATE TABLE IF NOT EXISTS rag_documents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_name TEXT NOT NULL DEFAULT '_global',
+                filename TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                chunk_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS rag_chunks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                doc_id INTEGER REFERENCES rag_documents(id) ON DELETE CASCADE,
+                agent_name TEXT NOT NULL DEFAULT '_global',
+                chunk_index INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                embedding TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_rag_chunks_agent
+                ON rag_chunks(agent_name);
+            CREATE INDEX IF NOT EXISTS idx_rag_docs_hash
+                ON rag_documents(content_hash, agent_name);
         """)
         conn.commit()
         logger.info("All database tables initialised in %s", _DB_PATH)

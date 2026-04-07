@@ -194,6 +194,12 @@ def ingest_document(
         init_rag_db()
         path = Path(filepath).expanduser().resolve()
 
+        # Path boundary check — reuse the same sandbox as file tools
+        from src.tools.files import _is_path_allowed
+        access_error = _is_path_allowed(path)
+        if access_error:
+            return {"ok": False, "error": access_error}
+
         if not path.exists():
             return {"ok": False, "error": f"File not found: {filepath}"}
 
