@@ -42,6 +42,30 @@ try:
 except Exception:
     pass
 
+# Code interpreter — sandboxed Python execution
+try:
+    from src.tools import code_interpreter  # noqa: F401
+except Exception:
+    pass
+
+# Browser agent — Playwright web automation
+try:
+    from src.tools import browser_agent  # noqa: F401
+except Exception:
+    pass
+
+# Smart home / IoT / Calendar tools
+try:
+    from src.tools import smart_home  # noqa: F401
+except Exception:
+    pass
+
+# Vision tools — image analysis and OCR
+try:
+    from src.tools import vision  # noqa: F401
+except Exception:
+    pass
+
 # Auto-load user plugins from ~/.pagal-os/plugins/
 try:
     from src.core.plugins import load_plugins

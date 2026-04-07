@@ -233,3 +233,7 @@ templates = Jinja2Templates(directory=str(_templates_dir))
 
 # Include API routes
 app.include_router(router)
+
+# Include WebSocket routes (streaming agent execution)
+from src.api.websocket import router as ws_router
+app.include_router(ws_router)

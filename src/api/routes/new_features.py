@@ -241,3 +241,210 @@ async def api_voice_transcribe(audio: UploadFile = File(...)) -> dict[str, Any]:
 
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+# ==========================================================================
+# Smart Memory (Mem0-style facts)
+# ==========================================================================
+
+@router.get("/api/facts", tags=["smart-memory"])
+async def api_get_facts(agent_name: str = "_global", category: str | None = None) -> dict[str, Any]:
+    """Get all stored facts for an agent."""
+    from src.core.smart_memory import get_facts
+    facts = get_facts(agent_name, category=category)
+    return {"ok": True, "facts": facts}
+
+
+@router.post("/api/facts", tags=["smart-memory"])
+async def api_add_fact(req: dict[str, Any]) -> dict[str, Any]:
+    """Add a fact to smart memory."""
+    from src.core.smart_memory import add_fact
+    return add_fact(
+        fact=req.get("fact", ""),
+        agent_name=req.get("agent_name", "_global"),
+        category=req.get("category", "general"),
+        confidence=req.get("confidence", 1.0),
+        expires_at=req.get("expires_at"),
+    )
+
+
+@router.delete("/api/facts/{fact_id}", tags=["smart-memory"])
+async def api_delete_fact(fact_id: int) -> dict[str, Any]:
+    """Delete a fact."""
+    from src.core.smart_memory import forget_fact
+    return forget_fact(fact_id)
+
+
+@router.post("/api/facts/extract", tags=["smart-memory"])
+async def api_extract_facts(req: dict[str, Any]) -> dict[str, Any]:
+    """Extract facts from text automatically."""
+    from src.core.smart_memory import extract_facts_from_text
+    facts = extract_facts_from_text(req.get("text", ""), agent_name=req.get("agent_name", "_global"))
+    return {"ok": True, "extracted": facts}
+
+
+# ==========================================================================
+# Payments & Marketplace Monetization
+# ==========================================================================
+
+@router.get("/api/pricing/{agent_name}", tags=["payments"])
+async def api_get_pricing(agent_name: str) -> dict[str, Any]:
+    """Get pricing for an agent."""
+    from src.core.payments import get_agent_pricing
+    return {"ok": True, **get_agent_pricing(agent_name)}
+
+
+@router.post("/api/pricing", tags=["payments"])
+async def api_set_pricing(req: dict[str, Any]) -> dict[str, Any]:
+    """Set pricing for an agent."""
+    from src.core.payments import set_agent_pricing
+    return set_agent_pricing(
+        agent_name=req.get("agent_name", ""),
+        pricing_model=req.get("pricing_model", "free"),
+        price_per_use=req.get("price_per_use", 0.0),
+        monthly_price=req.get("monthly_price", 0.0),
+        free_runs_per_month=req.get("free_runs_per_month", 10),
+    )
+
+
+@router.get("/api/revenue", tags=["payments"])
+async def api_revenue() -> dict[str, Any]:
+    """Get revenue report."""
+    from src.core.payments import get_revenue_report
+    return get_revenue_report()
+
+
+# ==========================================================================
+# Multi-Step Planning
+# ==========================================================================
+
+@router.post("/api/plan", tags=["planner"])
+async def api_create_plan(req: dict[str, Any]) -> dict[str, Any]:
+    """Create a multi-step execution plan for a task."""
+    from src.core.planner import create_plan
+    plan = create_plan(req.get("task", ""), req.get("tools", []))
+    return {
+        "ok": True,
+        "task": plan.task,
+        "steps": [{"index": s.index, "description": s.description, "tool": s.tool} for s in plan.steps],
+    }
+
+
+@router.post("/api/plan/execute", tags=["planner"])
+async def api_execute_plan(req: dict[str, Any]) -> dict[str, Any]:
+    """Create and execute a plan with self-reflection."""
+    from src.core.planner import create_plan, execute_plan
+    plan = create_plan(req.get("task", ""), req.get("tools", []))
+    return execute_plan(plan, agent_name=req.get("agent_name", ""))
+
+
+# ==========================================================================
+# Escalation / Human Handoff
+# ==========================================================================
+
+@router.get("/api/escalations", tags=["escalation"])
+async def api_get_escalations(agent_name: str | None = None) -> dict[str, Any]:
+    """Get pending escalations."""
+    from src.core.escalation import get_pending_escalations
+    return {"ok": True, "escalations": get_pending_escalations(agent_name)}
+
+
+@router.post("/api/escalations/{escalation_id}/resolve", tags=["escalation"])
+async def api_resolve_escalation(escalation_id: str, req: dict[str, Any]) -> dict[str, Any]:
+    """Resolve an escalation."""
+    from src.core.escalation import resolve_escalation
+    return resolve_escalation(
+        escalation_id=escalation_id,
+        decision=req.get("decision", "approved"),
+        response=req.get("response", ""),
+        responder=req.get("responder", "operator"),
+    )
+
+
+# ==========================================================================
+# Agent Cloning with Learning Transfer
+# ==========================================================================
+
+@router.post("/api/agents/{source}/clone-with-learning", tags=["cloning"])
+async def api_clone_with_learning(source: str, req: dict[str, Any]) -> dict[str, Any]:
+    """Clone an agent with full knowledge transfer."""
+    from src.core.learning_transfer import clone_with_learning
+    return clone_with_learning(
+        source_name=source,
+        new_name=req.get("new_name", ""),
+        transfer_memory=req.get("transfer_memory", True),
+        transfer_facts=req.get("transfer_facts", True),
+        transfer_knowledge=req.get("transfer_knowledge", True),
+        personality_override=req.get("personality", ""),
+    )
+
+
+@router.get("/api/agents/{name}/lineage", tags=["cloning"])
+async def api_agent_lineage(name: str) -> dict[str, Any]:
+    """Get the fork lineage of an agent."""
+    from src.core.learning_transfer import get_agent_lineage
+    return get_agent_lineage(name)
+
+
+# ==========================================================================
+# Scheduled Reports
+# ==========================================================================
+
+@router.get("/api/reports", tags=["reports"])
+async def api_list_reports() -> dict[str, Any]:
+    """List all scheduled reports."""
+    from src.core.scheduled_reports import list_reports
+    return {"ok": True, "reports": list_reports()}
+
+
+@router.post("/api/reports", tags=["reports"])
+async def api_create_report(req: dict[str, Any]) -> dict[str, Any]:
+    """Create a scheduled report."""
+    from src.core.scheduled_reports import create_scheduled_report
+    return create_scheduled_report(
+        name=req.get("name", ""),
+        agent_name=req.get("agent_name", ""),
+        task=req.get("task", ""),
+        schedule=req.get("schedule", ""),
+        delivery=req.get("delivery"),
+    )
+
+
+@router.post("/api/reports/{report_id}/run", tags=["reports"])
+async def api_run_report(report_id: str) -> dict[str, Any]:
+    """Manually run a report."""
+    from src.core.scheduled_reports import run_report
+    return run_report(report_id)
+
+
+@router.delete("/api/reports/{report_id}", tags=["reports"])
+async def api_delete_report(report_id: str) -> dict[str, Any]:
+    """Delete a scheduled report."""
+    from src.core.scheduled_reports import delete_report
+    return delete_report(report_id)
+
+
+# ==========================================================================
+# Natural Language Workflow Builder
+# ==========================================================================
+
+@router.post("/api/workflows/build-from-text", tags=["nl-workflows"])
+async def api_build_workflow(req: dict[str, Any]) -> dict[str, Any]:
+    """Build a complete workflow from a natural language description."""
+    from src.core.nl_workflows import build_workflow
+    return build_workflow(req.get("description", ""))
+
+
+@router.post("/api/workflows/parse", tags=["nl-workflows"])
+async def api_parse_workflow(req: dict[str, Any]) -> dict[str, Any]:
+    """Parse a description into workflow components (without creating anything)."""
+    from src.core.nl_workflows import parse_workflow_description
+    return parse_workflow_description(req.get("description", ""))
+
+
+@router.get("/api/workflows/suggestions", tags=["nl-workflows"])
+async def api_workflow_suggestions() -> dict[str, Any]:
+    """Get example workflow descriptions users can try."""
+    from src.core.nl_workflows import list_workflow_suggestions
+    return {"ok": True, "suggestions": list_workflow_suggestions()}
+
