@@ -1,0 +1,33 @@
+version: "3.8"
+
+services:
+  pagal-os:
+    build: .
+    container_name: pagal-os
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    volumes:
+      # Persist agent data, memory, and database across restarts
+      - pagal-data:/root/.pagal-os
+    restart: unless-stopped
+    environment:
+      - PAGAL_LOG_FORMAT=json
+      - PAGAL_SANDBOX_MODE=process
+
+  # Optional: Ollama for local LLM (no API key needed)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: pagal-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+    profiles:
+      - local-llm
+
+volumes:
+  pagal-data:
+  ollama-models:

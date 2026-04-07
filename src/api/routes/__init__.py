@@ -15,6 +15,7 @@ from src.api.routes.store import router as store_router
 from src.api.routes.system import router as system_router
 from src.api.routes.teams import router as teams_router
 from src.api.routes.tools import router as tools_router
+from src.api.routes.new_features import router as new_features_router
 
 router = APIRouter()
 
@@ -26,4 +27,5 @@ router.include_router(system_router)
 router.include_router(memory_routes_router)
 router.include_router(automation_router)
 router.include_router(tools_router)
+router.include_router(new_features_router)
 router.include_router(pages_router)

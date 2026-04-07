@@ -23,3 +23,28 @@ try:
     from src import integrations  # noqa: F401
 except Exception:
     pass
+
+# RAG tools — document ingestion and query
+try:
+    from src.tools import rag_tools  # noqa: F401
+except Exception:
+    pass
+
+# Webhook bridge tools — call external webhooks (Zapier/n8n)
+try:
+    from src.core import webhook_bridge  # noqa: F401
+except Exception:
+    pass
+
+# Email tools — read and send emails
+try:
+    from src.channels import email_channel  # noqa: F401
+except Exception:
+    pass
+
+# Auto-load user plugins from ~/.pagal-os/plugins/
+try:
+    from src.core.plugins import load_plugins
+    load_plugins()
+except Exception:
+    pass

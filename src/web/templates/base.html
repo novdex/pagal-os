@@ -6,6 +6,11 @@
     <title>{% block title %}PAGAL OS{% endblock %}</title>
     <link rel="stylesheet" href="/static/style.css">
     <meta name="csrf-token" content="{{ csrf_token() }}">
+    <!-- PWA Support -->
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="theme-color" content="#6c5ce7">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 </head>
 <body>
     <nav class="navbar">
