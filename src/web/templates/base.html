@@ -13,53 +13,105 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 </head>
 <body>
-    <nav class="navbar">
-        <div class="nav-brand">
-            <a href="/">
-                <span class="logo-icon">&#x1F9E0;</span>
-                <span class="logo-text">PAGAL OS</span>
-            </a>
-        </div>
-        <div class="nav-links">
-            <a href="/" class="nav-link {% block nav_dashboard %}{% endblock %}">My Agents</a>
-            <a href="/create" class="nav-link {% block nav_create %}{% endblock %}">Create</a>
-            <a href="/builder" class="nav-link {% block nav_builder %}{% endblock %}">Builder</a>
-            <a href="/gallery" class="nav-link {% block nav_gallery %}{% endblock %}">Gallery</a>
-            <a href="/playground" class="nav-link {% block nav_playground %}{% endblock %}">Playground</a>
-            <a href="/store" class="nav-link {% block nav_store %}{% endblock %}">Store</a>
-            <a href="/logs" class="nav-link {% block nav_logs %}{% endblock %}">Logs</a>
-            <a href="/analytics" class="nav-link {% block nav_analytics %}{% endblock %}">Analytics</a>
-            <a href="/traces" class="nav-link {% block nav_traces %}{% endblock %}">Traces</a>
-            <a href="/debugger" class="nav-link {% block nav_debugger %}{% endblock %}">Debugger</a>
-            <a href="/dependencies" class="nav-link {% block nav_dependencies %}{% endblock %}">Dependencies</a>
-            <a href="/settings" class="nav-link {% block nav_settings %}{% endblock %}">Settings</a>
-            <!-- Notification Bell -->
-            <div id="notif-bell" style="position:relative; cursor:pointer; padding:0.25rem 0.5rem;" onclick="toggleNotifDropdown()">
-                <span style="font-size:1.2rem;">&#x1F514;</span>
-                <span id="notif-badge" style="display:none; position:absolute; top:-2px; right:-2px; background:#ef4444; color:white; font-size:0.6rem; font-weight:bold; border-radius:50%; width:16px; height:16px; line-height:16px; text-align:center;">0</span>
-                <!-- Dropdown -->
-                <div id="notif-dropdown" style="display:none; position:absolute; right:0; top:100%; margin-top:0.5rem; width:320px; max-height:400px; overflow-y:auto; background:var(--bg); border:1px solid var(--border); border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,0.3); z-index:1000; padding:0.5rem 0;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);">
-                        <strong style="font-size:0.85rem;">Notifications</strong>
-                        <button onclick="markAllNotifRead(event)" style="background:none; border:none; color:var(--accent); cursor:pointer; font-size:0.75rem;">Mark all read</button>
-                    </div>
-                    <div id="notif-list" style="padding:0.25rem 0;"></div>
+    <!-- Top Bar — minimal: logo + search + notifications -->
+    <header class="topbar">
+        <button class="sidebar-toggle" onclick="toggleSidebar()" aria-label="Menu">&#9776;</button>
+        <a href="/" class="topbar-brand">
+            <span class="logo-icon">&#x1F9E0;</span>
+            <span class="logo-text">PAGAL OS</span>
+        </a>
+        <div class="topbar-spacer"></div>
+        <!-- Notification Bell -->
+        <div id="notif-bell" class="topbar-notif" onclick="toggleNotifDropdown()">
+            <span>&#x1F514;</span>
+            <span id="notif-badge" class="notif-badge" style="display:none;">0</span>
+            <div id="notif-dropdown" class="notif-dropdown" style="display:none;">
+                <div class="notif-header">
+                    <strong>Notifications</strong>
+                    <button onclick="markAllNotifRead(event)">Mark all read</button>
                 </div>
+                <div id="notif-list"></div>
             </div>
         </div>
-    </nav>
+        <a href="/settings" class="topbar-icon" title="Settings">&#x2699;</a>
+    </header>
 
-    <main class="container">
-        {% block content %}{% endblock %}
+    <!-- Sidebar — grouped navigation -->
+    <aside class="sidebar" id="sidebar">
+        <nav class="sidebar-nav">
+            <div class="nav-group">
+                <div class="nav-group-label">Agents</div>
+                <a href="/" class="nav-item {% block nav_dashboard %}{% endblock %}">
+                    <span class="nav-icon">&#x1F3E0;</span> Dashboard
+                </a>
+                <a href="/create" class="nav-item {% block nav_create %}{% endblock %}">
+                    <span class="nav-icon">&#x2795;</span> Create Agent
+                </a>
+                <a href="/gallery" class="nav-item {% block nav_gallery %}{% endblock %}">
+                    <span class="nav-icon">&#x1F4CB;</span> Templates
+                </a>
+                <a href="/store" class="nav-item {% block nav_store %}{% endblock %}">
+                    <span class="nav-icon">&#x1F6D2;</span> Store
+                </a>
+            </div>
+
+            <div class="nav-group">
+                <div class="nav-group-label">Tools</div>
+                <a href="/playground" class="nav-item {% block nav_playground %}{% endblock %}">
+                    <span class="nav-icon">&#x1F3AE;</span> Playground
+                </a>
+                <a href="/builder" class="nav-item {% block nav_builder %}{% endblock %}">
+                    <span class="nav-icon">&#x1F527;</span> Builder
+                </a>
+            </div>
+
+            <div class="nav-group">
+                <div class="nav-group-label">Monitor</div>
+                <a href="/logs" class="nav-item {% block nav_logs %}{% endblock %}">
+                    <span class="nav-icon">&#x1F4DC;</span> Logs
+                </a>
+                <a href="/analytics" class="nav-item {% block nav_analytics %}{% endblock %}">
+                    <span class="nav-icon">&#x1F4CA;</span> Analytics
+                </a>
+                <a href="/traces" class="nav-item {% block nav_traces %}{% endblock %}">
+                    <span class="nav-icon">&#x1F50D;</span> Traces
+                </a>
+            </div>
+
+            <div class="nav-group">
+                <div class="nav-group-label">Advanced</div>
+                <a href="/debugger" class="nav-item {% block nav_debugger %}{% endblock %}">
+                    <span class="nav-icon">&#x1F41B;</span> Debugger
+                </a>
+                <a href="/dependencies" class="nav-item {% block nav_dependencies %}{% endblock %}">
+                    <span class="nav-icon">&#x1F517;</span> Dependencies
+                </a>
+                <a href="/settings" class="nav-item {% block nav_settings %}{% endblock %}">
+                    <span class="nav-icon">&#x2699;</span> Settings
+                </a>
+            </div>
+        </nav>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <div class="container">
+            {% block content %}{% endblock %}
+        </div>
     </main>
-
-    <footer class="footer">
-        <p>PAGAL OS v0.1 &mdash; AI Agent Operating System</p>
-    </footer>
 
     <script src="/static/app.js"></script>
     <script>
-        // --- Global Notification System ---
+        // --- Sidebar Toggle (mobile) ---
+        function toggleSidebar() {
+            document.getElementById('sidebar').classList.toggle('open');
+        }
+        // Close sidebar on content click (mobile)
+        document.querySelector('.main-content').addEventListener('click', () => {
+            document.getElementById('sidebar').classList.remove('open');
+        });
+
+        // --- Notification System ---
         let notifDropdownOpen = false;
 
         function toggleNotifDropdown() {
@@ -68,7 +120,6 @@
             if (notifDropdownOpen) loadNotifications();
         }
 
-        // Close dropdown when clicking outside
         document.addEventListener('click', function(e) {
             const bell = document.getElementById('notif-bell');
             if (bell && !bell.contains(e.target) && notifDropdownOpen) {
@@ -81,36 +132,26 @@
             try {
                 const data = await apiCall('/api/notifications?limit=20');
                 if (!data.ok) return;
-
                 const list = document.getElementById('notif-list');
                 const notifications = data.notifications || [];
-
                 if (notifications.length === 0) {
-                    list.innerHTML = '<div style="text-align:center; padding:1rem; color:var(--text-secondary); font-size:0.85rem;">No notifications</div>';
+                    list.innerHTML = '<div class="notif-empty">No notifications</div>';
                     return;
                 }
-
                 list.innerHTML = notifications.map(n => {
                     const typeIcons = { completed: '&#x2705;', approval: '&#x1F6A8;', error: '&#x274C;', info: '&#x2139;' };
                     const icon = typeIcons[n.type] || '&#x2139;';
                     const bg = n.read ? 'transparent' : 'var(--bg-secondary)';
-                    const ts = n.timestamp ? new Date(n.timestamp).toLocaleString() : '';
                     return `
-                        <div style="padding:0.5rem 0.75rem; background:${bg}; border-bottom:1px solid var(--border); cursor:pointer;"
-                             onclick="markNotifRead(this.dataset.nid, this)" data-nid="${escapeHtml(String(n.id))}">
-                            <div style="display:flex; gap:0.5rem; align-items:flex-start;">
-                                <span style="font-size:0.9rem;">${icon}</span>
-                                <div style="flex:1;">
-                                    <div style="font-size:0.8rem; font-weight:${n.read ? 'normal' : 'bold'};">${escapeHtml(n.agent_name)}</div>
-                                    <div style="font-size:0.75rem; color:var(--text-secondary);">${escapeHtml(n.message).substring(0, 80)}</div>
-                                    <div style="font-size:0.65rem; color:var(--text-secondary); margin-top:2px;">${ts}</div>
-                                </div>
+                        <div class="notif-item" style="background:${bg}" onclick="markNotifRead(this.dataset.nid, this)" data-nid="${escapeHtml(String(n.id))}">
+                            <span class="notif-icon">${icon}</span>
+                            <div class="notif-body">
+                                <div class="notif-agent">${escapeHtml(n.agent_name)}</div>
+                                <div class="notif-msg">${escapeHtml(n.message).substring(0, 80)}</div>
                             </div>
                         </div>`;
                 }).join('');
-            } catch(e) {
-                console.error('Failed to load notifications:', e);
-            }
+            } catch(e) {}
         }
 
         async function updateNotifBadge() {
@@ -118,12 +159,8 @@
                 const data = await apiCall('/api/notifications?unread_only=true&limit=1');
                 const badge = document.getElementById('notif-badge');
                 const count = data.unread_count || 0;
-                if (count > 0) {
-                    badge.style.display = 'block';
-                    badge.textContent = count > 99 ? '99+' : count;
-                } else {
-                    badge.style.display = 'none';
-                }
+                badge.style.display = count > 0 ? 'flex' : 'none';
+                badge.textContent = count > 99 ? '99+' : count;
             } catch(e) {}
         }
 
@@ -144,7 +181,6 @@
             } catch(e) {}
         }
 
-        // Poll badge every 10 seconds
         updateNotifBadge();
         setInterval(updateNotifBadge, 10000);
     </script>
